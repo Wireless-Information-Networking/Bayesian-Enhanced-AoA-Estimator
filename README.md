@@ -113,3 +113,36 @@ A comprehensive end-to-end RFID AoA estimation pipeline that:
   - Heatmap representations
 - Performs error analysis and method comparison
 - Outputs organized figures and complete analysis reports
+
+## 📁 Repository Structure
+
+The repository is organized with the following key directories:
+
+### `/MATLAB`
+
+Contains all MATLAB implementation scripts:
+
+- `process_experimental_data.m`: Preprocessing script for raw CSV data
+- `antenna_array_processing.m`: Complete end-to-end AoA analysis pipeline
+
+### `/figures`
+
+Stores generated visualization outputs from the analysis:
+
+- AoA estimation plots
+- Spectral analysis visualizations
+- 3D beam pattern representations
+- Method comparison charts
+- Error analysis visualizations
+
+Example figures are included to demonstrate the expected output format.
+
+### `/results`
+
+Contains processed data and analysis results:
+
+- `rfid_array_data.mat`: Preprocessed dataset ready for analysis
+- `complete_analysis.mat`: Comprehensive results from all estimation methods
+- Performance metrics and statistical evaluations
+
+Example result files are provided to illustrate the data structure.

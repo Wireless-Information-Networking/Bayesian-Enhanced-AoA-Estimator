@@ -24,7 +24,7 @@ clc;                                                                            
 dataDir = 'filepath';                                                                                % TODO: Set base directory path for CSV files
 tagID   = '000233b2ddd9014000000000';                                                                % Target RFID tag ID
 c       = 3e8;                                                                                       % Speed of light approximation [m/s]
-% Alt.: c = physconst('LightSpeed');                                                                 % Speed of light, requires Antenna Toolkit [m/s]
+% Alt.: c = physconst('LightSpeed');                                                                 % Speed of light, requires Antenna Toolbox [m/s]
 
 %% STEP 2: Load Files
 fileList = dir(fullfile(dataDir, '**', '*.csv'));                                                    % Recursive search for files in subdirectories, see README.md documentation to understand the file structure and naming convention
@@ -73,10 +73,10 @@ for i = 1:length(fileList)                                                      
         rssi2 = t2.peakRssi;                                                                         % Peak RSSI for Antenna 2
         mag1  = sqrt(10.^(rssi1 / 10));                                                              % Convert RSSI to linear scale for Antenna 1
         mag2  = sqrt(10.^(rssi2 / 10));                                                              % Convert RSSI to linear scale for Antenna 2
-        % STEP 3.7: Create phasors
+        % STEP 3.8: Create phasors
         phasor1 = mag1 .* exp(1j * phi1);                                                            % Create phasor for Antenna 1
         phasor2 = mag2 .* exp(1j * phi2);                                                            % Create phasor for Antenna 2
-        % STEP 3.8: Save entry
+        % STEP 3.9: Save entry
         entry = struct();                                                                            % Initialize a new entry structure
         entry.filename = fname;                                                                      % Store filename
         entry.date     = dateStr;                                                                    % Store date string
@@ -91,7 +91,7 @@ for i = 1:length(fileList)                                                      
         entry.rssi2    = rssi2;                                                                      % Store RSSI for Antenna 2
         entry.phasor1  = phasor1;                                                                    % Store phasor for Antenna 1
         entry.phasor2  = phasor2;                                                                    % Store phasor for Antenna 2
-        % STEP 3.9: Append to array + Confirmation
+        % STEP 3.10: Append to array + Confirmation
         allData = [allData; entry];                                                                  % Append the new entry to the allData array
         fprintf('Processed: %s\n', fname);                                                           % Debug message: display processed file name
     catch ME
