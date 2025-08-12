@@ -6,13 +6,11 @@
 
 # =================================================================================================================================== #
 # --------------------------------------------------------- EXTERNAL IMPORTS -------------------------------------------------------- #
-import pandas as pd # Data manipulation and analysis.                                                                                 #
-import numpy as np # Mathematical functions.                                                                                          #
-import os # Operating system dependent functionality.                                                                                 #
-import re # Regular expression operations.                                                                                            #
-import matplotlib.pyplot as plt # Plotting library.                                                                                   #
-from matplotlib.colors import ListedColormap  # Colormap for plotting.                                                                #
-import scipy.constants as sc             # Physical and mathematical constants.                                                       #
+import os                                       # Operating system dependent functionality.                                           #
+import re                                       # Regular expression operations.                                                      #
+import pandas          as pd                    # Data manipulation and analysis.                                                     #
+import numpy           as np                    # Mathematical functions.                                                             #
+import scipy.constants as sc                    # Physical and mathematical constants.                                                #
 # =================================================================================================================================== #
 
 
