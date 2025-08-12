@@ -28,7 +28,7 @@ def beamforming_spectrum_calculation(phasor1, phasor2, rssi1, rssi2, L, waveleng
         - aoa_scan   [np.ndarray] : Array of angles to scan (in degrees)
         
     Returns:
-        - tuple    : (B_ds, B_w, theta_ds, theta_w)
+        - tuple        : (B_ds, B_w, theta_ds, theta_w)
             - B_ds     : Standard delay-and-sum beamforming spectrum
             - B_w      : RSSI-weighted beamforming spectrum
             - theta_ds : Estimated angle using standard beamforming
