@@ -24,7 +24,7 @@ import src.data_management as dm                 # Data management functions.   
 import datetime                                  # Date and time manipulation.                                                        #
 from scipy.stats import norm                     # Statistical functions for normal distribution fitting.                             #
 from scipy.optimize import curve_fit             # Curve fitting functions for Gaussian fitting.                                      #
-from datetime import datetime                    # Date and time functions for timestamps.                                            #
+import datetime                                  # Date and time functions for timestamps.                                            #
 from numpy.polynomial.polynomial import polyfit  # Polynomial fitting for trend lines.                                                #
 from scipy import stats                          # Statistical functions for hypothesis testing and distribution fitting.             #
 # =================================================================================================================================== #
@@ -32,7 +32,7 @@ from scipy import stats                          # Statistical functions for hyp
 
 # =================================================================================================================================== #
 # ---------------------------------------------------------- PLOTTING SETTINGS ------------------------------------------------------ #
-plt.style.use(["science", "no-latex"])                                                                                                #
+plt.style.use("seaborn-v0_8-whitegrid")                                                                                               #
 plt.rcParams.update({                                                                                                                 #
     "font.size"       : 10,        # Base font size for all text in the plot.                                                         #
     "axes.titlesize"  : 12,        # Title size for axes.                                                                             #
@@ -752,7 +752,7 @@ def analyze_aoa_by_distance(replica_results, distance_key, output_dir=None):
     # Define marker shapes for better accessibility (for color blind readers)
     markers = ['o', 's', '^', 'v', 'D', 'p', '*', 'h', 'H', '+', 'x', '<', '>']
     # Plot ideal line
-    plt.plot([-10, 10], [-10, 10], 'k--', label='Ideal (y=x)', alpha=0.5)
+    plt.plot([-20, 20], [-20, 20], 'k--', label='Ideal (y=x)', alpha=0.5)
     # Combined results for summary
     combined_results = {}
     # Plot each frequency's AoA estimations
@@ -792,7 +792,7 @@ def analyze_aoa_by_distance(replica_results, distance_key, output_dir=None):
     plt.legend(loc='lower right', framealpha=0.9)
     # Set axis limits to focus on the -15 to 15 degree range
     plt.xlim(-10, 10)
-    plt.ylim(-10, 10)
+    plt.ylim(-10, 20)
     # Add overall RMSE
     all_actual_combined = []
     all_estimated_combined = []
