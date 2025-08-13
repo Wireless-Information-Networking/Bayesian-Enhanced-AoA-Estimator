@@ -70,8 +70,8 @@ def analyze_aoa(phasor1, phasor2, rssi1, rssi2, L, wavelength, aoa_scan, true_an
         - dict: Dictionary with AoA estimates and spectra for all methods
     """
     # 1. Phase difference method
-    dphi     = dm.compute_phase_difference(phasor1, phasor2)
-    theta_ph = dm.phase_difference_aoa(dphi, L, wavelength)
+    dphi     = pad.compute_phase_difference(phasor1, phasor2)
+    theta_ph = pad.phase_difference_aoa(dphi, L, wavelength)
     # 2. Beamforming methods
     B_ds, B_w, theta_ds, theta_w = bf.beamforming_spectrum_calculation(
         phasor1, phasor2, rssi1, rssi2, L, wavelength, aoa_scan)
