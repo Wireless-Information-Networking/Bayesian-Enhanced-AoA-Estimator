@@ -12,10 +12,11 @@ import os                                            # Operating system interfac
 import glob                                          # Unix style pathname pattern expansion for file searching.                      #
 import re                                            # Regular expression operations for pattern matching in filenames.               #
 import numpy                   as np                 # Mathematical functions.                                                        #
+import pandas                  as pd                 # Data manipulation and analysis library.                                        #
 import scipy.constants         as sc                 # Physical and mathematical constants.                                           #
 import matplotlib.pyplot       as plt                # Data visualization.                                                            #
 import src.data_management     as dm                 # Data management functions for importing and organizing data.                   #
-import src.phase_difference    as pd                 # Phase difference calculations for AoA estimation.                              #  
+import src.phase_difference    as pad                # Phase difference calculations for AoA estimation.                              #  
 import src.beamforming         as bf                 # Beamforming methods for AoA estimation.                                        #
 import src.music               as music              # MUSIC algorithm for high-resolution AoA estimation.                            #
 import src.bayesian_regression as br                 # Bayesian regression for machine learning models on AoA data.                   #
