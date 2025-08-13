@@ -28,7 +28,8 @@ from   tqdm                    import tqdm           # Progress bar for loops, u
 # =================================================================================================================================== #
 # ------------------------------------------------------- CONFIGURATION SETTINGS ---------------------------------------------------- #
 SCRIPT_DIR         = os.path.dirname(os.path.abspath(__file__))                    # Get the directory of the current script.         #
-PROJECT_ROOT       = os.path.dirname(SCRIPT_DIR)                                   # Go up one level to project root.                 #
+# PROJECT_ROOT     = os.path.dirname(SCRIPT_DIR)                                   # Go up one level to project root.                 #
+PROJECT_ROOT       = SCRIPT_DIR                                                    # Use the script directory as the project root.    #
 DATA_DIRECTORY     = os.path.join(PROJECT_ROOT, 'data', '2025-07-09')              # Directory containing the data files.             #
 RESULTS_BASE_DIR   = os.path.join(PROJECT_ROOT, 'results')                         # Store results in a separate folder.              #
 EXPERIMENT_NAME    = 'AoA_Analysis'                                                # Name of the experiment for output directory.     #
