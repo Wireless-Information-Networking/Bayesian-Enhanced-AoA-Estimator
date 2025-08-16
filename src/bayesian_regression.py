@@ -45,13 +45,13 @@ np.random.seed(42)    # Set NumPy random seed for reproducibility.              
 # ---------------------------------------------------------- PLOTTING SETTINGS ------------------------------------------------------ #
 plt.style.use("seaborn-v0_8-whitegrid")                                                                                               #
 plt.rcParams.update({                                                                                                                 #
-    "font.size"       : 14,        # Base font size for all text in the plot.                                                         #
-    "axes.titlesize"  : 16,        # Title size for axes.                                                                             #
-    "axes.labelsize"  : 16,        # Axis labels size.                                                                                #
-    "xtick.labelsize" : 16,        # X-axis tick labels size.                                                                         #
-    "ytick.labelsize" : 16,        # Y-axis tick labels size.                                                                         #
-    "legend.fontsize" : 18,        # Legend font size for all text in the legend.                                                     #
-    "figure.titlesize": 20,        # Overall figure title size for all text in the figure.                                            #
+    "font.size"       : 16,        # Base font size for all text in the plot.                                                         #
+    "axes.titlesize"  : 18,        # Title size for axes.                                                                             #
+    "axes.labelsize"  : 18,        # Axis labels size.                                                                                #
+    "xtick.labelsize" : 18,        # X-axis tick labels size.                                                                         #
+    "ytick.labelsize" : 18,        # Y-axis tick labels size.                                                                         #
+    "legend.fontsize" : 20,        # Legend font size for all text in the legend.                                                     #
+    "figure.titlesize": 24,        # Overall figure title size for all text in the figure.                                            #
 })                                                                                                                                    #
 sns.set_theme(style="whitegrid", context="paper") # Set seaborn theme for additional aesthetics and context.                          #
 plt.rcParams["figure.figsize"] = (6, 4)  # Set default figure size for all plots to 6x4.                                              #
@@ -797,18 +797,19 @@ class BayesianAoARegressor:
             # For 'flat' prior or any other prior not in prior_metrics, use a default value
             prior_std = 1.0  # Default value
             print(f"Using default prior std={prior_std} for {self.prior_type} prior")
-        # Calculate errors to identify good and poor examples
+        # Calculate errors to identify examples
         if self.prior_type in prior_test:
             prior_mean = prior_test[self.prior_type]
             prior_errors = np.abs(prior_mean - y_test)
             posterior_errors = np.abs(y_pred_mean - y_test)
             # Calculate improvement (positive means posterior is better)
             improvements = prior_errors - posterior_errors
-            # Find one good example (high improvement) and one poor example (low improvement)
+            # Find a good example (high improvement)
             good_idx = np.argmax(improvements)
-            poor_idx = np.argmin(improvements)
+            # Look for cases where posterior uncertainty is high
+            worse_idx = np.argmax(y_pred_std)
             # Use these two specific indices
-            indices = [good_idx, poor_idx]
+            indices = [good_idx, worse_idx]
         else:
             # If we don't have prior data, just pick first and last examples
             indices = [0, len(y_test)-1]
@@ -847,7 +848,7 @@ class BayesianAoARegressor:
             if i == 0:
                 ax.set_title(f'Good Example: Prior vs Posterior (True Angle: {true_angle:.2f}°)')
             else:
-                ax.set_title(f'Poor Example: Prior vs Posterior (True Angle: {true_angle:.2f}°)')
+                ax.set_title(f'High Uncertainty Example: Prior vs Posterior (True Angle: {true_angle:.2f}°)')
             ax.grid(True, alpha=0.3)
             ax.legend()
             # Annotate statistics
@@ -907,12 +908,12 @@ class BayesianAoARegressor:
                         label='90% Credible Interval')
         plt.fill_between(range(len(y_test)), y_pred_25, y_pred_75, alpha=0.5, color='blue', 
                         label='50% Credible Interval')
-        plt.plot(range(len(y_test)), y_pred_50, 'orange', linewidth=3, label='Median Prediction')
-        plt.plot(range(len(y_test)), y_test_sorted, 'ro', makersize=10, label='True Angles')
-        plt.xlabel('Test Point Index (sorted by true angle)')
-        plt.ylabel('Angle (degrees)')
-        plt.title('Posterior Predictive Distribution')
-        plt.legend()
+        plt.plot(range(len(y_test)), y_pred_50, 'orange', linewidth=2.5, label='Median Prediction')
+        plt.plot(range(len(y_test)), y_test_sorted, 'ro', markersize=8, label='True Angles')
+        plt.xlabel('Test Point Index (sorted by true angle)', fontsize=16)
+        plt.ylabel('Angle (degrees)', fontsize=16)
+        plt.title('Posterior Predictive Distribution', fontsize=20)
+        plt.legend(fontsize=16)
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
         plt.savefig(os.path.join(vis_dir, "posterior_predictive.png"), dpi=300, bbox_inches='tight')
@@ -1313,6 +1314,225 @@ class BayesianAoARegressor:
             features = np.append(features, D)
         return features
 
+def analyze_svi_convergence_metrics(models_dict, results_dir):
+    """
+    Analyze SVI convergence metrics across different models/priors and generate a tabular report.
+    
+    Parameters:
+        - models_dict [dict] : Dictionary of trained BayesianAoARegressor models
+        - results_dir [str]  : Directory to save the convergence analysis results
+        
+    Returns:
+        - convergence_metrics [dict]: Dictionary with convergence metrics by model
+    """
+    print("\n=== ANALYZING SVI CONVERGENCE ACROSS PRIORS ===")
+    
+    # Output directory
+    os.makedirs(results_dir, exist_ok=True)
+    
+    # Store convergence metrics
+    convergence_metrics = {}
+    
+    # Define convergence criteria
+    def detect_convergence(losses, window_size=100, threshold_pct=0.5):
+        """Detect when loss has converged (stabilized)"""
+        if len(losses) <= window_size:
+            return len(losses) - 1  # Not enough data, return last index
+            
+        # Calculate rolling standard deviation as percentage of mean
+        rolling_std_pct = []
+        for i in range(window_size, len(losses)):
+            window = losses[i-window_size:i]
+            std_pct = (np.std(window) / abs(np.mean(window))) * 100
+            rolling_std_pct.append(std_pct)
+            
+        # Find first point where std_pct is below threshold
+        for i, std_pct in enumerate(rolling_std_pct):
+            if std_pct < threshold_pct:
+                return i + window_size  # Add window_size to get the actual index
+                
+        return len(losses) - 1  # No convergence detected, return last index
+    
+    # Define function to fit exponential decay
+    def fit_convergence_rate(iterations, losses):
+        """Fit exponential decay model to estimate convergence rate"""
+        from scipy.optimize import curve_fit
+        
+        def exp_decay(x, a, b, c):
+            return a * np.exp(-b * x) + c
+            
+        try:
+            # Normalize iterations to [0, 1] for numerical stability
+            x_norm = iterations / np.max(iterations)
+            params, _ = curve_fit(exp_decay, x_norm, losses, 
+                                p0=[losses[0]-losses[-1], 5, losses[-1]], 
+                                bounds=([0, 0, -np.inf], [np.inf, 100, np.inf]))
+            
+            convergence_rate = params[1]
+            return convergence_rate
+        except Exception as e:
+            print(f"Could not fit convergence rate: {e}")
+            return None
+    
+    # Analyze each model
+    for model_name, model in models_dict.items():
+        if model.train_summary is None or 'losses' not in model.train_summary:
+            print(f"Skipping {model_name} - no loss data available")
+            continue
+            
+        losses = np.array(model.train_summary['losses'])
+        iterations = np.arange(1, len(losses) + 1)
+        
+        # Calculate key convergence metrics
+        
+        # 1. Iterations to convergence (using our detection function)
+        iter_to_converge = detect_convergence(losses)
+        
+        # 2. Loss reduction (initial vs. final)
+        initial_loss = losses[0]
+        final_loss = losses[-1]
+        abs_reduction = initial_loss - final_loss
+        pct_reduction = (abs_reduction / abs(initial_loss)) * 100 if initial_loss != 0 else 0
+        
+        # 3. Convergence rate (from exponential fit)
+        conv_rate = fit_convergence_rate(iterations, losses)
+        
+        # 4. Stability of final 10% of training
+        final_window = losses[-int(0.1*len(losses)):]
+        final_stability = (np.std(final_window) / abs(np.mean(final_window))) * 100
+        
+        # 5. Early-stage (0-20%) vs late-stage (80-100%) loss reduction rate
+        early_loss_drop = losses[0] - losses[int(0.2*len(losses))]
+        early_rate = early_loss_drop / (0.2*len(losses))
+        
+        late_window_start = int(0.8*len(losses))
+        late_loss_drop = losses[late_window_start] - losses[-1]
+        late_rate = late_loss_drop / (len(losses) - late_window_start)
+        
+        # Store metrics
+        convergence_metrics[model_name] = {
+            'prior_type': model.prior_type,
+            'feature_mode': model.feature_mode,
+            'iterations': len(losses),
+            'iter_to_converge': iter_to_converge,
+            'pct_to_converge': (iter_to_converge / len(losses)) * 100,
+            'initial_loss': initial_loss,
+            'final_loss': final_loss,
+            'abs_reduction': abs_reduction,
+            'pct_reduction': pct_reduction,
+            'convergence_rate': conv_rate,
+            'final_stability': final_stability,
+            'early_reduction_rate': early_rate,
+            'late_reduction_rate': late_rate
+        }
+    
+    # Create a tabular summary for paper
+    columns = ['prior_type', 'feature_mode', 'iter_to_converge', 'pct_to_converge', 
+               'pct_reduction', 'convergence_rate', 'final_stability']
+    
+    # 1. Group by prior type
+    prior_groups = {}
+    for name, metrics in convergence_metrics.items():
+        prior = metrics['prior_type']
+        if prior not in prior_groups:
+            prior_groups[prior] = []
+        prior_groups[prior].append((name, metrics))
+    
+    # Write summary tables
+    with open(os.path.join(results_dir, "svi_convergence_summary.txt"), 'w') as f:
+        f.write("SVI CONVERGENCE ANALYSIS BY PRIOR TYPE\n")
+        f.write("=====================================\n\n")
+        
+        # Table 1: Iterations to convergence by prior type (averaged across feature modes)
+        f.write("TABLE 1: CONVERGENCE METRICS BY PRIOR TYPE\n")
+        f.write("Prior Type | Iterations to Converge | % of Total | Convergence Rate | Loss Reduction (%)\n")
+        f.write("----------|----------------------|-----------|-----------------|------------------\n")
+        
+        for prior in sorted(prior_groups.keys()):
+            metrics_list = [m for _, m in prior_groups[prior]]
+            avg_iter = np.mean([m['iter_to_converge'] for m in metrics_list])
+            avg_pct = np.mean([m['pct_to_converge'] for m in metrics_list])
+            avg_rate = np.mean([m['convergence_rate'] for m in metrics_list if m['convergence_rate'] is not None])
+            avg_reduction = np.mean([m['pct_reduction'] for m in metrics_list])
+            
+            f.write(f"{prior.upper():10} | {avg_iter:.1f} | {avg_pct:.1f}% | {avg_rate:.3f} | {avg_reduction:.1f}%\n")
+        
+        f.write("\n\n")
+        
+        # Table 2: Detailed metrics for each configuration
+        f.write("TABLE 2: DETAILED CONVERGENCE METRICS BY MODEL CONFIGURATION\n")
+        f.write("Model | Prior | Features | Iter to Conv | % of Total | Conv Rate | Reduction | Stability\n")
+        f.write("------|-------|----------|-------------|-----------|----------|-----------|----------\n")
+        
+        for name, metrics in sorted(convergence_metrics.items()):
+            prior = metrics['prior_type'].upper()
+            features = metrics['feature_mode']
+            iter_conv = metrics['iter_to_converge']
+            pct_conv = metrics['pct_to_converge']
+            conv_rate = metrics['convergence_rate'] if metrics['convergence_rate'] is not None else "N/A"
+            reduction = metrics['pct_reduction']
+            stability = metrics['final_stability']
+            
+            if isinstance(conv_rate, float):
+                conv_rate_str = f"{conv_rate:.3f}"
+            else:
+                conv_rate_str = "N/A"
+                
+            f.write(f"{name:6} | {prior:5} | {features:8} | {iter_conv:11.0f} | {pct_conv:9.1f}% | "
+                    f"{conv_rate_str:8} | {reduction:8.1f}% | {stability:8.2f}%\n")
+    
+        f.write("\n\n")
+        
+        # Interpretation and recommendations
+        f.write("INTERPRETATION OF METRICS:\n")
+        f.write("-------------------------\n")
+        f.write("- Iterations to Converge: Lower is better, faster convergence\n")
+        f.write("- % of Total: Percentage of total training iterations needed to converge\n")
+        f.write("- Convergence Rate: Higher is better, faster exponential decay of loss\n")
+        f.write("- Loss Reduction: Higher is better, more improvement from initial loss\n")
+        f.write("- Stability: Lower is better, less variation in final 10% of training\n\n")
+        
+        # Summary of findings
+        f.write("SUMMARY OF FINDINGS:\n")
+        f.write("------------------\n")
+        
+        # Find fastest converging prior
+        avg_conv_by_prior = {}
+        for prior, models in prior_groups.items():
+            avg_conv_by_prior[prior] = np.mean([m['pct_to_converge'] for _, m in models])
+        
+        fastest_prior = min(avg_conv_by_prior.items(), key=lambda x: x[1])[0]
+        slowest_prior = max(avg_conv_by_prior.items(), key=lambda x: x[1])[0]
+        
+        f.write(f"1. Fastest converging prior: {fastest_prior.upper()} "
+                f"({avg_conv_by_prior[fastest_prior]:.1f}% of iterations)\n")
+        f.write(f"2. Slowest converging prior: {slowest_prior.upper()} "
+                f"({avg_conv_by_prior[slowest_prior]:.1f}% of iterations)\n")
+        
+        # Prior with highest convergence rate
+        avg_rate_by_prior = {}
+        for prior, models in prior_groups.items():
+            rates = [m['convergence_rate'] for _, m in models if m['convergence_rate'] is not None]
+            if rates:
+                avg_rate_by_prior[prior] = np.mean(rates)
+        
+        if avg_rate_by_prior:
+            highest_rate_prior = max(avg_rate_by_prior.items(), key=lambda x: x[1])[0]
+            f.write(f"3. Prior with highest convergence rate: {highest_rate_prior.upper()} "
+                    f"(rate = {avg_rate_by_prior[highest_rate_prior]:.3f})\n")
+            
+        # Prior with most stable convergence
+        avg_stability_by_prior = {}
+        for prior, models in prior_groups.items():
+            avg_stability_by_prior[prior] = np.mean([m['final_stability'] for _, m in models])
+            
+        most_stable_prior = min(avg_stability_by_prior.items(), key=lambda x: x[1])[0]
+        f.write(f"4. Most stable convergence: {most_stable_prior.upper()} "
+                f"(final stability = {avg_stability_by_prior[most_stable_prior]:.2f}%)\n")
+    
+    print(f"SVI convergence analysis completed and saved to: {os.path.join(results_dir, 'svi_convergence_summary.txt')}")
+    return convergence_metrics
+
 def train_bayesian_models(data_manager, results_dir, num_epochs=10000):
     """
     Train multiple Bayesian AoA regression models with different priors and feature sets.
@@ -1347,6 +1567,9 @@ def train_bayesian_models(data_manager, results_dir, num_epochs=10000):
     # Dictionary to store results
     models = {}
     results = {}
+    # Create convergence analysis directory
+    convergence_dir = os.path.join(results_dir, "svi_convergence_analysis")
+    os.makedirs(convergence_dir, exist_ok=True)
     # Train models for each configuration
     for config in configs:
         print(f"\n--- Training Bayesian model with {config['prior']} prior, {config['features']} features ---")
@@ -1363,18 +1586,18 @@ def train_bayesian_models(data_manager, results_dir, num_epochs=10000):
         results[config['name']] = train_results
         # Visualize results
         model.visualize_results(results_dir, config['name'])
-        # Generate new visualizations
         model.render_model_and_guide(results_dir, config['name'])
         model.plot_posterior_predictive(results_dir, config['name'])
         model.plot_uncertainty_calibration(results_dir, config['name'])
-        # Visualize prior vs posterior
         models[config['name']].visualize_prior_vs_posterior(results_dir, config['name'])
         model.visualize_weight_distributions(results_dir, config['name'])
         model.analyze_with_posterior_weights(data_manager, results_dir, config['name'])
         print(f"Completed training {config['name']}")
+    # Perofrm SVI convergence analysis
+    convergence_metrics = analyze_svi_convergence_metrics(models, convergence_dir)
     # Create comparison visualizations
     compare_bayesian_models(models, results, results_dir)
-    return {"models": models, "results": results}
+    return {"models": models, "results": results, "convergence": convergence_metrics}
 
 def compare_bayesian_models(models, results, output_dir):
     """
@@ -1461,11 +1684,11 @@ def compare_bayesian_models(models, results, output_dir):
     rects1  = ax.bar(x - width/2, sorted_maes, width, label='MAE')
     rects2  = ax.bar(x + width/2, sorted_rmses, width, label='RMSE')
     # Add labels and title
-    ax.set_ylabel('Error (degrees)')
-    ax.set_title('Bayesian AoA Model Performance Comparison')
+    ax.set_ylabel('Error (degrees)', fontsize=16)
+    ax.set_title('Bayesian AoA Model Performance Comparison', fontsize=20)
     ax.set_xticks(x)
-    ax.set_xticklabels(display_names, rotation=45, ha='right')
-    ax.legend()
+    ax.set_xticklabels(display_names, rotation=45, ha='right', fontsize=14)
+    ax.legend(fontsize=14)
     # Add value labels
     def autolabel(rects):
         for rect in rects:
@@ -1474,7 +1697,7 @@ def compare_bayesian_models(models, results, output_dir):
                         xy=(rect.get_x() + rect.get_width()/2, height),
                         xytext=(0, 3),  # 3 points vertical offset
                         textcoords="offset points",
-                        ha='center', va='bottom')
+                        ha='center', va='bottom', fontsize=12)
     autolabel(rects1)
     autolabel(rects2)
     fig.tight_layout()
