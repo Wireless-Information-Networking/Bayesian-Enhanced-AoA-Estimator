@@ -1,0 +1,53 @@
+cff-version: 1.2.0
+message: "If you use this software in your research, please cite it as below."
+title: "Bayesian Enhanced AoA Estimator"
+type: software
+authors:
+  - family-names: "Martínez Benelmekki"
+    given-names: "Nedal"
+    orcid: "https://orcid.org/0009-0003-1955-5006"
+    affiliation: "Wireless Information Networking Group, UAB"
+repository-code: "https://github.com/Wireless-Information-Networking/Bayesian-Enhanced-AoA-Estimator"
+url: "https://github.com/Wireless-Information-Networking/Bayesian-Enhanced-AoA-Estimator"
+abstract: >-
+  This software provides code, setup instructions, and tools to implement a Bayesian Enhanced Angle of Arrival (AoA) Estimator.
+  It conducts the full pipeline, starting by conducting classic antenna-array signal processing to estimate the AoA. Then, these 
+  estimations are computed into physical-informed priors, and this is fed into a Bayesian Regression Model, which produces
+  the final AoA estimation. The software is designed to be modular, allowing for easy integration with various antenna arrays and signal processing techniques.
+keywords:
+  - RFID
+  - Bayesian Machine Learning
+  - Physics-Informed
+  - Signal Processing
+  - Antenna-Array
+  - Wireless Communication
+  - Radio Frequency
+license: MIT
+version: 1.0.0
+date-released: 2025-09-02
+preferred-citation:
+  type: software
+  authors:
+    - family-names: "Martínez Benelmekki"
+      given-names: "Nedal"
+      orcid: "https://orcid.org/0009-0003-1955-5006"
+      affiliation: "Wireless Information Networking Group, UAB"
+  title: "Bayesian Enhanced AoA Estimator: A Physics-Informed Machine Learning Approach for Accurate Angle of Arrival Estimation"
+  year: 2025
+  url: "https://github.com/Wireless-Information-Networking/Bayesian-Enhanced-AoA-Estimator"
+  repository-code: "https://github.com/Wireless-Information-Networking/Bayesian-Enhanced-AoA-Estimator"
+  abstract: >-
+    This software provides code, setup instructions, and tools to implement a Bayesian Enhanced Angle of Arrival (AoA) Estimator.
+    It conducts the full pipeline, starting by conducting classic antenna-array signal processing to estimate the AoA. Then, these 
+    estimations are computed into physical-informed priors, and this is fed into a Bayesian Regression Model, which produces
+    the final AoA estimation. The software is designed to be modular, allowing for easy integration with various antenna arrays and signal processing techniques.
+  keywords:
+  - RFID
+  - Bayesian Machine Learning
+  - Physics-Informed
+  - Signal Processing
+  - Antenna-Array
+  - Wireless Communication
+  - Radio Frequency
+  license: MIT
+  version: 1.0.0

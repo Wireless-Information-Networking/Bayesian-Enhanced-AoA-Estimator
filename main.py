@@ -12,10 +12,11 @@ import os                                            # Operating system interfac
 import glob                                          # Unix style pathname pattern expansion for file searching.                      #
 import re                                            # Regular expression operations for pattern matching in filenames.               #
 import numpy                   as np                 # Mathematical functions.                                                        #
+import pandas                  as pd                 # Data manipulation and analysis library.                                        #
 import scipy.constants         as sc                 # Physical and mathematical constants.                                           #
 import matplotlib.pyplot       as plt                # Data visualization.                                                            #
 import src.data_management     as dm                 # Data management functions for importing and organizing data.                   #
-import src.phase_difference    as pd                 # Phase difference calculations for AoA estimation.                              #  
+import src.phase_difference    as pad                # Phase difference calculations for AoA estimation.                              #  
 import src.beamforming         as bf                 # Beamforming methods for AoA estimation.                                        #
 import src.music               as music              # MUSIC algorithm for high-resolution AoA estimation.                            #
 import src.bayesian_regression as br                 # Bayesian regression for machine learning models on AoA data.                   #
@@ -27,7 +28,8 @@ from   tqdm                    import tqdm           # Progress bar for loops, u
 # =================================================================================================================================== #
 # ------------------------------------------------------- CONFIGURATION SETTINGS ---------------------------------------------------- #
 SCRIPT_DIR         = os.path.dirname(os.path.abspath(__file__))                    # Get the directory of the current script.         #
-PROJECT_ROOT       = os.path.dirname(SCRIPT_DIR)                                   # Go up one level to project root.                 #
+# PROJECT_ROOT     = os.path.dirname(SCRIPT_DIR)                                   # Go up one level to project root.                 #
+PROJECT_ROOT       = SCRIPT_DIR                                                    # Use the script directory as the project root.    #
 DATA_DIRECTORY     = os.path.join(PROJECT_ROOT, 'data', '2025-07-09')              # Directory containing the data files.             #
 RESULTS_BASE_DIR   = os.path.join(PROJECT_ROOT, 'results')                         # Store results in a separate folder.              #
 EXPERIMENT_NAME    = 'AoA_Analysis'                                                # Name of the experiment for output directory.     #
@@ -68,8 +70,8 @@ def analyze_aoa(phasor1, phasor2, rssi1, rssi2, L, wavelength, aoa_scan, true_an
         - dict: Dictionary with AoA estimates and spectra for all methods
     """
     # 1. Phase difference method
-    dphi     = dm.compute_phase_difference(phasor1, phasor2)
-    theta_ph = dm.phase_difference_aoa(dphi, L, wavelength)
+    dphi     = pad.compute_phase_difference(phasor1, phasor2)
+    theta_ph = pad.phase_difference_aoa(dphi, L, wavelength)
     # 2. Beamforming methods
     B_ds, B_w, theta_ds, theta_w = bf.beamforming_spectrum_calculation(
         phasor1, phasor2, rssi1, rssi2, L, wavelength, aoa_scan)
