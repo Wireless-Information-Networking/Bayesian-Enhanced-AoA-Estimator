@@ -2,6 +2,46 @@
 
 AoA estimator for passive UHF RFID based on Bayesian regression and classical antenna array signal processing. Combines physics-informed priors with Pyro-based uncertainty quantification.
 
+## 📑 Table of Contents
+
+- [Bayesian-Enhanced-AoA-Estimator](#bayesian-enhanced-aoa-estimator)
+  - [📑 Table of Contents](#-table-of-contents)
+  - [🔍 Overview](#-overview)
+  - [📊 Dataset Structure](#-dataset-structure)
+    - [📂 File Naming Convention](#-file-naming-convention)
+    - [📁 Directory Structure](#-directory-structure)
+  - [🧮 MATLAB Implementation](#-matlab-implementation)
+    - [📄 `process_experimental_data.m`](#-process_experimental_datam)
+    - [📄 `antenna_array_processing.m`](#-antenna_array_processingm)
+  - [🐍 Python Implementation](#-python-implementation)
+    - [📄 `bayesian_regression.py`](#-bayesian_regressionpy)
+    - [📄 `beamforming.py`](#-beamformingpy)
+    - [📄 `data_management.py`](#-data_managementpy)
+    - [📄 `MUSIC.py`](#-musicpy)
+    - [📄 `phase_difference.py`](#-phase_differencepy)
+    - [📄 `visualization.py`](#-visualizationpy)
+  - [📁 Repository Structure](#-repository-structure)
+    - [`/data`](#data)
+    - [`/figures`](#figures)
+    - [`/MATLAB`](#matlab)
+    - [`/results`](#results)
+    - [`/src`](#src)
+  - [📄 License](#-license)
+
+## 🔍 Overview
+
+The Bayesian-Enhanced-AoA-Estimator provides a comprehensive framework for estimating the Angle of Arrival (AoA) in passive UHF RFID systems. This project combines:
+
+1. **Classical Antenna Array Processing**: Implements traditional techniques like Phase-difference estimation, Delay-and-Sum beamforming, and MUSIC algorithm.
+
+2. **Bayesian Regression Approach**: Leverages probabilistic programming with Pyro to incorporate physics-informed priors and estimate uncertainty.
+
+3. **Multi-frequency Fusion**: Combines data from multiple frequencies to improve estimation accuracy and robustness.
+
+4. **Uncertainty Quantification**: Provides confidence metrics for all estimates, essential for real-world deployment.
+
+This approach significantly improves AoA estimation accuracy compared to classical methods alone, particularly in challenging low-SNR environments and multi-path scenarios typical in indoor RFID deployments.
+
 ## 📊 Dataset Structure
 
 ### 📂 File Naming Convention
@@ -114,16 +154,55 @@ A comprehensive end-to-end RFID AoA estimation pipeline that:
 - Performs error analysis and method comparison
 - Outputs organized figures and complete analysis reports
 
+## 🐍 Python Implementation
+
+The repository includes Python implementations that use Bayesian methods through Pyro:
+
+### 📄 `bayesian_regression.py`
+
+Core implementation of the Bayesian AoA estimator:
+
+- Defines physics-informed prior distributions based on antenna array geometry
+- Implements probabilistic model for phase and RSSI observations
+- Performs Bayesian inference using Pyro's SVI engine
+- Provides posterior distributions for AoA estimates with uncertainty quantification
+- Handles multi-frequency data fusion through hierarchical modeling
+
+### 📄 `beamforming.py`
+
+Provides functions to conduct classic antenna-array analysis of DS Beamforming and Weigthed DS Beamforming.
+
+### 📄 `data_management.py`
+
+Utility module for preprocessing and managing the dataset:
+
+- Reads and parses CSV files from RFID experiments
+- Converts raw measurements to complex phasors
+- Handles data cleaning and outlier removal
+- Provides data loaders compatible with PyTorch/Pyro
+
+### 📄 `MUSIC.py`
+
+Provides functions to conduct classic antenna-array analysis of the MUSIC algorithm.
+
+### 📄 `phase_difference.py`
+
+Provides functions to conduct classic antenna-array analysis of the phase difference analysis.
+
+### 📄 `visualization.py`
+
+Comprehensive visualization tools.
+
 ## 📁 Repository Structure
 
 The repository is organized with the following key directories:
 
-### `/MATLAB`
+### `/data`
 
-Contains all MATLAB implementation scripts:
+Raw and processed datasets:
 
-- `process_experimental_data.m`: Preprocessing script for raw CSV data
-- `antenna_array_processing.m`: Complete end-to-end AoA analysis pipeline
+- `/2025-07-09`: Original CSV files from RFID experiments
+- `/testing`: Data collected during environment and set up testing
 
 ### `/figures`
 
@@ -137,12 +216,34 @@ Stores generated visualization outputs from the analysis:
 
 Example figures are included to demonstrate the expected output format.
 
+### `/MATLAB`
+
+Contains all MATLAB implementation scripts:
+
+- `process_experimental_data.m`: Preprocessing script for raw CSV data
+- `antenna_array_processing.m`: Complete end-to-end AoA analysis pipeline
+
 ### `/results`
 
 Contains processed data and analysis results:
 
 - `rfid_array_data.mat`: Preprocessed dataset ready for analysis
 - `complete_analysis.mat`: Comprehensive results from all estimation methods
-- Performance metrics and statistical evaluations
+- `ZIP files`: Contains ZIP files of the full analysis pipeline.
 
 Example result files are provided to illustrate the data structure.
+
+### `/src`
+
+Contains all Python implementations:
+
+- `bayesian_regression.py`: Core Bayesian estimation implementation
+- `beamforming.py`: DS and Weighted DS Beamforming
+- `data_management.py`: Dataset processing and management
+- `music.py`: MUSIC algorithm
+- `phase_difference.py`: Phase-difference methods
+- `visualization.py`: Visualization tools
+
+## 📄 License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
