@@ -1,81 +1,92 @@
 # =================================================================================================================================== #
+# ----------------------------------------------------------- DESCRIPTION ----------------------------------------------------------- #
+# Contains the necessary functions to train and evaluate a hierarchical Bayesian model for Angle of Arrival (AoA) estimation using    #
+# RFID data. The model incorporates encoded physics-informed estimations based on classical antena-array methods and provides         #
+# uncertainty quantification for its predictions.                                                                                     #
+# =================================================================================================================================== #
+
+
+# =================================================================================================================================== #
 # --------------------------------------------------------- EXTERNAL IMPORTS -------------------------------------------------------- #
-import src.data_management as dm  # Data management functions for organizing and analyzing RFID data.
-import main as main               # Main module for running the analysis and managing experiments.
-import os
-import numpy as np
-import pandas as pd
-from   scipy.stats import norm, kstest, halfnorm
-import torch
-import torch.optim as optim
-from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_absolute_error, mean_squared_error
-import pyro
-import pyro.distributions as dist
-from pyro.nn import PyroModule, PyroSample
-from pyro.infer import SVI, Trace_ELBO, Predictive
-from pyro.infer.autoguide import AutoNormal
-import pyro.optim as pyro_optim
-import networkx as nx
-import seaborn as sns
-import matplotlib as mpl
-mpl.use('Agg')                                       # Use 'Agg' backend for non-interactive plotting (suitable for scripts).         #
-import matplotlib.pyplot as plt
-from cycler import cycler
+import os                                                 # For file and directory operations.                                        #
+import torch                                              # PyTorch for tensor computations and neural networks.                      #
+import pyro                                               # Probabilistic programming library.                                        #
+import main                    as main                    # Main module for running the analysis and managing experiments.            #
+import numpy                   as np                      # Numerical operations.                                                     #
+import pyro.distributions      as dist                    # Pyro distributions.                                                       #
+import pyro.optim              as pyro_optim              # Pyro optimizers.                                                          #
+import networkx                as nx                      # For graph-based analyses (if needed).                                     #
+import seaborn                 as sns                     # For enhanced plotting aesthetics.                                         #
+import matplotlib              as mpl                     # For plotting settings.                                                    #
+import matplotlib.pyplot       as plt                     # For plotting.                                                             #
+from   scipy.stats             import kstest              # For Kolmogorov-Smirnov test.                                              #
+from   scipy.stats             import norm                # For normal distribution fitting.                                          #
+from   sklearn.preprocessing   import StandardScaler      # For feature scaling.                                                      #
+from   sklearn.model_selection import train_test_split    # For train-test splitting.                                                 #
+from   sklearn.metrics         import mean_absolute_error # MAE metric.                                                               #
+from   sklearn.metrics         import mean_squared_error  # RMSE metric.                                                              #
+from   pyro.nn                 import PyroModule          # PyroModule base class.                                                    #
+from   pyro.nn                 import PyroSample          # PyroSample for defining stochastic layers.                                #
+from   pyro.infer              import SVI                 # Stochastic Variational Inference.                                         #
+from   pyro.infer              import Trace_ELBO          # ELBO loss function for SVI.                                               #
+from   pyro.infer              import Predictive          # Posterior predictive sampling.                                            #
+from   pyro.infer.autoguide    import AutoNormal          # Automatic guide for variational inference.                                #
+from   cycler                  import cycler              # For custom matplotlib color cycles.                                       # 
+from   matplotlib              import rcParams            # For setting matplotlib parameters.                                        #   
+mpl.use('Agg')                                            # Use 'Agg' backend for non-interactive plotting (suitable for scripts).    #
 # =================================================================================================================================== #
 
 
 # =================================================================================================================================== #
 # ---------------------------------------------------------- PLOTTING SETTINGS ------------------------------------------------------ #
-COLOR_CYCLE  = ['#1f77b4','#ff7f0e','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf']
-MARKER_CYCLE = ['o','s','D','^','v','<','>','p','P','*']
-custom_cycler = (cycler(color=COLOR_CYCLE) * cycler(marker=MARKER_CYCLE[:len(COLOR_CYCLE)]) * cycler(linestyle=['-']*len(COLOR_CYCLE)))
-
-TITLE_SIZE, LABEL_SIZE, LEGEND_SIZE, TICK_SIZE, ANNOTATION_SIZE = 24, 20, 20, 18, 12
-FIG_WIDTH, FIG_HEIGHT, LINE_WIDTH, MARKER_SIZE = 10, 7, 1.75, 8
-
-plt.style.use("seaborn-v0_8-whitegrid")
-mpl.rcParams['axes.prop_cycle'] = custom_cycler
-plt.rcParams.update({
-    "figure.figsize": (FIG_WIDTH, FIG_HEIGHT),
-    "figure.dpi": 300,
-    "figure.titlesize": TITLE_SIZE,
-    "font.family": "serif",
-    "font.serif": ["Computer Modern Roman", "Times New Roman"],
-    "font.size": LABEL_SIZE,
-    "axes.titlesize": TITLE_SIZE,
-    "axes.labelsize": LABEL_SIZE,
-    "axes.linewidth": 1.2,
-    "axes.grid": True,
-    "axes.grid.which": "both",
-    "axes.grid.axis": "both",
-    "xtick.labelsize": TICK_SIZE,
-    "ytick.labelsize": TICK_SIZE,
-    "xtick.major.width": 1.0,
-    "ytick.major.width": 1.0,
-    "legend.fontsize": LEGEND_SIZE,
-    "legend.framealpha": 0.8,
-    "legend.edgecolor": "0.8",
-    "legend.fancybox": True,
-    "legend.markerscale": 1.2,
-    "lines.linewidth": LINE_WIDTH,
-    "lines.markersize": MARKER_SIZE,
-    "lines.markeredgewidth": 1.2,
-    "text.usetex": True,
-    "text.latex.preamble": r"\usepackage{amsmath,amssymb,amsfonts,mathrsfs}",
-})
-sns.set_theme(style="whitegrid", context="paper", font_scale=1.2)
-
-TAG_NAME = "Belt DEE"
+COLOR_CYCLE  = ['#1f77b4','#ff7f0e','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf']                  #
+MARKER_CYCLE = ['o','s','D','^','v','<','>','p','P','*']                                                                              #
+custom_cycler = (cycler(color=COLOR_CYCLE) * cycler(marker=MARKER_CYCLE[:len(COLOR_CYCLE)])*cycler(linestyle=['-']*len(COLOR_CYCLE))) #
+TITLE_SIZE, LABEL_SIZE, LEGEND_SIZE, TICK_SIZE, ANNOTATION_SIZE = 24, 20, 20, 18, 12                                                  #
+FIG_WIDTH, FIG_HEIGHT, LINE_WIDTH, MARKER_SIZE = 10, 7, 1.75, 8                                                                       #
+plt.style.use("seaborn-v0_8-whitegrid")                                                                                               #
+mpl.rcParams['axes.prop_cycle'] = custom_cycler                                                                                       #
+plt.rcParams.update({                                                                                                                 #
+    "figure.figsize": (FIG_WIDTH, FIG_HEIGHT),                                                                                        #
+    "figure.dpi": 300,                                                                                                                #
+    "figure.titlesize": TITLE_SIZE,                                                                                                   #
+    "font.family": "serif",                                                                                                           #
+    "font.serif": ["Computer Modern Roman", "Times New Roman"],                                                                       #
+    "font.size": LABEL_SIZE,                                                                                                          #
+    "axes.titlesize": TITLE_SIZE,                                                                                                     #
+    "axes.labelsize": LABEL_SIZE,                                                                                                     #
+    "axes.linewidth": 1.2,                                                                                                            #
+    "axes.grid": True,                                                                                                                #
+    "axes.grid.which": "both",                                                                                                        #
+    "axes.grid.axis": "both",                                                                                                         #
+    "xtick.labelsize": TICK_SIZE,                                                                                                     #
+    "ytick.labelsize": TICK_SIZE,                                                                                                     #
+    "xtick.major.width": 1.0,                                                                                                         #
+    "ytick.major.width": 1.0,                                                                                                         #
+    "legend.fontsize": LEGEND_SIZE,                                                                                                   #
+    "legend.framealpha": 0.8,                                                                                                         #
+    "legend.edgecolor": "0.8",                                                                                                        #
+    "legend.fancybox": True,                                                                                                          #
+    "legend.markerscale": 1.2,                                                                                                        #
+    "lines.linewidth": LINE_WIDTH,                                                                                                    #
+    "lines.markersize": MARKER_SIZE,                                                                                                  #
+    "lines.markeredgewidth": 1.2,                                                                                                     #
+    "text.usetex": True,                                                                                                              #
+    "text.latex.preamble": r"\usepackage{amsmath,amssymb,amsfonts,mathrsfs}",                                                         #
+})                                                                                                                                    #
+sns.set_theme(style="whitegrid", context="paper", font_scale=1.2)                                                                     #
+TAG_NAME = "Belt DEE"                                                                                                                 #
+plt.rc('text', usetex=True)                                                                                                           #
+plt.rc('font', family='serif')                                                                                                        #
 # =================================================================================================================================== #
 
 
 # =================================================================================================================================== #
 # ----------------------------------------------------- MACHINE LEARNING ANALYSIS --------------------------------------------------- #
-pyro.set_rng_seed(42)
-torch.manual_seed(42)
-np.random.seed(42)
+SEED = 42
+pyro.set_rng_seed(SEED) # For reproducibility - Sets the random number generator for Pyro, ensuring consistent results across runs.   
+torch.manual_seed(SEED) # For reproducibility - Sets the random number generator for PyTorch, ensuring consistent results across runs.
+np.random.seed(SEED)    # For reproducibility - Sets the random number generator for NumPy, ensuring consistent results across runs.
 
 
 class BayesianAoARegressor:
@@ -889,11 +900,19 @@ class BayesianAoARegressor:
 def compare_bayesian_models(results_dict, output_dir, experiment_name):
     """
     Compare Bayesian model variants with bar charts of MAE and RMSE.
-    results_dict: dict of {model_name: train_summary}
+    
+    Parameters:
+        - results_dict    [dict] : Dictionary with model names as keys and their performance summaries as values.
+        - output_dir      [str]  : Directory to save the comparison plots.
+        - experiment_name [str]  : Name of the experiment for organizing output.
+
+    Returns:
+        - Saves a bar chart comparing MAE and RMSE of different models.
     """
+    # Directory and filename setup
     vis_dir = os.path.join(output_dir, "bayesian_model", experiment_name)
     os.makedirs(vis_dir, exist_ok=True)
-
+    # Extract model names and their MAE/RMSE
     model_names = []
     maes, rmses = [], []
     for name, summary in results_dict.items():
@@ -901,10 +920,9 @@ def compare_bayesian_models(results_dict, output_dir, experiment_name):
             model_names.append(name)
             maes.append(summary['mae'])
             rmses.append(summary['rmse'])
-
     x = np.arange(len(model_names))
+    # Plotting
     width = 0.35
-
     plt.figure(figsize=(14, 6))
     plt.xticks(x, model_names, rotation=45, ha='right')
     plt.bar(x - width/2, maes, width, label='MAE')
@@ -918,9 +936,18 @@ def compare_bayesian_models(results_dict, output_dir, experiment_name):
     plt.close()
 
 def figure1_model_comparison(results_dict, output_dir, experiment_name):
-    import os, numpy as np, matplotlib.pyplot as plt
-    from matplotlib import rcParams
-    
+    """
+    Create a bar chart comparing different models based on their MAE and RMSE.
+    Configuration is special, as the figures are for the ICASSP conference paper.
+
+    Parameters:
+        - results_dict    [dict] : Dictionary with model names as keys and their performance summaries as values.
+        - output_dir      [str]  : Directory to save the comparison plots.
+        - experiment_name [str]  : Name of the experiment for organizing output.
+
+    Returns: 
+        - Saves a bar chart comparing MAE and RMSE of different models.
+    """
     # Increase default font sizes for paper readability
     rcParams['font.size'] = 20
     rcParams['axes.titlesize'] = 22
@@ -928,35 +955,32 @@ def figure1_model_comparison(results_dict, output_dir, experiment_name):
     rcParams['xtick.labelsize'] = 19
     rcParams['ytick.labelsize'] = 19
     rcParams['legend.fontsize'] = 19
-
+    # Directory setup
     vis_dir = os.path.join(output_dir, "bayesian_model", experiment_name)
     os.makedirs(vis_dir, exist_ok=True)
-
+    # Extract model names and their MAE/RMSE
     names, maes, rmses = [], [], []
     for name, s in results_dict.items():
         if isinstance(s, dict) and ('mae' in s and 'rmse' in s):
             names.append(name); maes.append(float(s['mae'])); rmses.append(float(s['rmse']))
-
+    # Sort by RMSE
     order = np.argsort(rmses)
     names  = [names[i]  for i in order]
     maes   = [maes[i]   for i in order]
     rmses  = [rmses[i]  for i in order]
-
+    # Plotting
     x = np.arange(len(names)); w = 0.42
     mae_color  = "#0A2342"   # deep navy
     rmse_color = "#17BECF"   # cyan
-
-    fig, ax = plt.subplots(figsize=(14, 6))
-    bars_mae  = ax.bar(x - w/2, maes,  width=w, color=mae_color,  label='MAE')
-    bars_rmse = ax.bar(x + w/2, rmses, width=w, color=rmse_color, label='RMSE', alpha=0.95)
-
+    fig, ax    = plt.subplots(figsize=(14, 6))
+    bars_mae   = ax.bar(x - w/2, maes,  width=w, color=mae_color,  label='MAE')
+    bars_rmse  = ax.bar(x + w/2, rmses, width=w, color=rmse_color, label='RMSE', alpha=0.95)
     ax.set_xticks(x, names, rotation=45, ha='right')
     ax.set_ylabel('Error (°)')
     ax.set_title('Model Comparison — MAE vs RMSE')
     ax.grid(True, axis='y', alpha=0.3)
     ax.legend(loc='upper left')
-
-    # helper: place 4-dp labels vertically inside bars
+    # Helper Function: place 4-decimal point labels vertically inside bars
     def _inside_labels(bars, vals, *, color_mode="auto"):
         for b, v in zip(bars, vals):
             h = b.get_height()
@@ -967,16 +991,26 @@ def figure1_model_comparison(results_dict, output_dir, experiment_name):
 
     _inside_labels(bars_mae, maes,  color_mode="auto")   # auto white/black
     _inside_labels(bars_rmse, rmses, color_mode="black") # force black on cyan
-
     fig.tight_layout()
     fig.savefig(os.path.join(vis_dir, "ICASSP_Fig1_model_comparison.png"), dpi=300, bbox_inches='tight')
     plt.close(fig)
 
-def figure2_scatter_and_posterior(best_summary, output_dir, experiment_name,
-                                  model_label="Best model", magnify=25):
-    import os, numpy as np, matplotlib.pyplot as plt
-    from matplotlib import rcParams
-    
+def figure2_scatter_and_posterior(best_summary, output_dir, experiment_name, model_label="Best model", magnify=25):
+    """
+    Create a figure with two subplots: (1) Scatter plot of predicted vs true AoA with uncertainty,
+    and (2) Posterior predictive distribution with uncertainty bands.
+    Configuration is special, as the figures are for the ICASSP conference paper.
+
+    Parameters:
+        - best_summary    [dict] : Summary dictionary from the best Bayesian model containing predictions and uncertainties.
+        - output_dir      [str]  : Directory to save the plots.
+        - experiment_name [str]  : Name of the experiment for organizing output.
+        - model_label     [str]  : Label for the model to be used in titles/legends.
+        - magnify         [int]  : Factor to magnify uncertainty bands in posterior plot for visibility.
+
+    Returns:
+        - Saves a figure with scatter plot and posterior predictive distribution.
+    """
     # Increase default font sizes for paper readability
     rcParams['font.size'] = 20
     rcParams['axes.titlesize'] = 22
@@ -984,45 +1018,38 @@ def figure2_scatter_and_posterior(best_summary, output_dir, experiment_name,
     rcParams['xtick.labelsize'] = 19
     rcParams['ytick.labelsize'] = 19
     rcParams['legend.fontsize'] = 16
+    # Directory setup
     vis_dir = os.path.join(output_dir, "bayesian_model", experiment_name)
     os.makedirs(vis_dir, exist_ok=True)
-
+    # Extract data from summary
     y_true  = np.asarray(best_summary['y_test'])
     mu      = np.asarray(best_summary['y_pred_mean'])
     std     = np.asarray(best_summary['y_pred_std'])
     samples = np.asarray(best_summary['y_pred_samples'])  # [S, N]
     priors  = best_summary.get('prior_test', {})
-
-    # --- Helper functions to create each plot ---
+    # Helper functions to create each plot
     def create_scatter_plot(ax):
         mn, mx = float(min(y_true.min(), mu.min())), float(max(y_true.max(), mu.max()))
         ax.plot([mn, mx], [mn, mx], linestyle='--', linewidth=1.2, color='r', label='Perfect Prediction')
-        
         # Same palette as visualize_results()
         shape_map = {'ds': '^', 'weighted': 'x', 'music': 's', 'phase': 'd'}
         color_map = {'ds': 'g',  'weighted': 'm', 'music': 'c', 'phase': 'y'}
-        
         for key, vals in priors.items():
             mk = shape_map.get(key, 'o')
             col = color_map.get(key, '#888888')
             if mk == 'x':
-                # 'x' is an unfilled marker; don't pass edgecolor to avoid warnings
                 ax.scatter(y_true, np.asarray(vals), marker=mk, color=col, s=58, alpha=0.7, label=key.upper())
             else:
                 ax.scatter(y_true, np.asarray(vals), marker=mk, color=col, s=58, alpha=0.7,
                            edgecolor='none', label=key.upper())
-        
-        # Bayesian series: NO explicit color/ecolor so it uses the default (matches visualize_results)
         ax.errorbar(y_true, mu, yerr=2*std, fmt='o', markersize=8,
                     alpha=0.95, label='Bayesian Predictions (2$\\sigma$)')
-        
         ax.set_xlabel('True AoA (°)')
         ax.set_ylabel('Predicted AoA (°)')
         ax.set_title(f'Predicted vs True — {model_label}')
         ax.grid(True, alpha=0.3)
         ax.legend(loc='best')
         return ax
-    
     def create_posterior_plot(ax):
         order = np.argsort(y_true)
         y_sorted = y_true[order]
@@ -1031,18 +1058,15 @@ def figure2_scatter_and_posterior(best_summary, output_dir, experiment_name,
         q25m = q50 - (q50 - q25) * magnify
         q75m = q50 + (q75 - q50) * magnify
         q95m = q50 + (q95 - q50) * magnify
-
         xs = np.arange(len(y_sorted))
         true_red      = "#D7263D"
         median_black  = "#000000"
         band50_dark   = "#0A2342"  # 50%
         band90_cyan   = "#5E88C6"  # 90%
-
         ax.fill_between(xs, q5m,  q95m,  alpha=0.30, color=band90_cyan, label='90% band')
         ax.fill_between(xs, q25m, q75m,  alpha=0.45, color=band50_dark, label='50% band')
         ax.plot(xs, q50, linewidth=1.9, color=median_black, label='Median')
         ax.plot(xs, y_sorted, 'o', markersize=4.5, color=true_red, label='True')
-
         ax.set_xlabel('Test sample (sorted by true AoA)')
         ax.set_ylabel('AoA (°)')
         ax.set_title('Posterior Predictive (bands magnified for visibility)')
@@ -1051,16 +1075,13 @@ def figure2_scatter_and_posterior(best_summary, output_dir, experiment_name,
         if leg is not None:
             leg.set_title(f"Magnification: ×{magnify}", prop={'size': 16})
         return ax
-
-    # --- Create the combined figure (original code) ---
+    # Create the combined figure
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
     create_scatter_plot(axes[0])
     create_posterior_plot(axes[1])
     fig.tight_layout()
     fig.savefig(os.path.join(vis_dir, "ICASSP_Fig2_scatter_and_posterior.png"), dpi=300, bbox_inches='tight')
     plt.close(fig)
-    
-    # --- Create individual figures ---
     # Figure 1: Scatter plot
     fig1 = plt.figure(figsize=(8, 6))
     ax1 = fig1.add_subplot(111)
@@ -1068,7 +1089,6 @@ def figure2_scatter_and_posterior(best_summary, output_dir, experiment_name,
     fig1.tight_layout()
     fig1.savefig(os.path.join(vis_dir, "ICASSP_Fig2a_scatter.png"), dpi=300, bbox_inches='tight')
     plt.close(fig1)
-    
     # Figure 2: Posterior plot
     fig2 = plt.figure(figsize=(8, 6))
     ax2 = fig2.add_subplot(111)
@@ -1078,18 +1098,31 @@ def figure2_scatter_and_posterior(best_summary, output_dir, experiment_name,
     plt.close(fig2)
 
 
-
-
 # =================================================================================================================================== #
 # --------------------------------------------------------- ORCHESTRATION ----------------------------------------------------------- #
 def train_bayesian_models(data_manager, results_dir, num_epochs=2000):
-    os.makedirs(results_dir, exist_ok=True)
+    """
+    Train and evaluate multiple Bayesian AoA regression models with different priors and feature modes.
 
+    Parameters:
+        - data_manager [DataManager] : Instance of DataManager containing training and test data.
+        - results_dir  [str]         : Directory to save results and visualizations.
+        - num_epochs   [int]         : Number of training epochs for each model.
+    
+    Returns:
+        - Dictionary containing:
+            - "results": All trained models with their performance summaries.
+            - "best_name": Name of the best-performing model based on RMSE.
+            - "best": The best model's entry (model instance and summary).
+    """
+    # Verify results directory exists
+    os.makedirs(results_dir, exist_ok=True)
+    # Define configurations to try
     configs = []
     for prior in ['ds','weighted','music','phase']:
         for fmode in ['full','width_only','sensor_only']:
             configs.append((prior, fmode))
-
+    # Train and evaluate each configuration
     models = {}
     for prior, fmode in configs:
         exp_name = f"{prior}_{fmode}"
@@ -1102,10 +1135,10 @@ def train_bayesian_models(data_manager, results_dir, num_epochs=2000):
         model.plot_posterior_predictive(results_dir, exp_name)
         model.plot_uncertainty_calibration(results_dir, exp_name)
         models[exp_name] = {'model': model, 'summary': summary}
-
+    # Compare models and obtain the best one
     best_name = min(models, key=lambda n: models[n]['summary']['rmse'])
     best_model = models[best_name]
-
+    # Return results
     return {
         "results": models,       # all models with summaries
         "best_name": best_name,  # name of the best model
