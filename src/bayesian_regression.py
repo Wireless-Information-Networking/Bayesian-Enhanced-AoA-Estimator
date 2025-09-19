@@ -88,7 +88,6 @@ pyro.set_rng_seed(SEED) # For reproducibility - Sets the random number generator
 torch.manual_seed(SEED) # For reproducibility - Sets the random number generator for PyTorch, ensuring consistent results across runs.
 np.random.seed(SEED)    # For reproducibility - Sets the random number generator for NumPy, ensuring consistent results across runs.
 
-
 class BayesianAoARegressor:
     """
     Hierarchical Bayesian AoA regressor.
@@ -104,6 +103,18 @@ class BayesianAoARegressor:
     """
 
     def __init__(self, use_gpu=True, prior_type='ds', feature_mode='full', obs_sigma=0.1):
+        """
+        Initialize the Bayesian AoA regressor class.
+
+        Parameters:
+            - use_gpu      [bool]  : Whether to use GPU, if available.
+            - prior_type   [str]   : Type of physics prior to use ('ds', 'weighted', 'music', 'phase', or 'none').
+            - feature_mode [str]   : Feature set to use ('full', 'no_distance', 'width_only').
+            - obs_sigma    [float] : Observation noise standard deviation (σᵧ).
+
+        Returns:
+            - None
+        """
         self.use_gpu = use_gpu and torch.cuda.is_available()
         self.device  = torch.device("cuda" if self.use_gpu else "cpu")
         self.prior_type   = prior_type
@@ -123,29 +134,37 @@ class BayesianAoARegressor:
     # -------------------------------------------------- Feature Extraction -------------------------------------------------- #
     def _extract_features(self, data_manager, include_distance=True, include_width=True):
         """
-        Build X, y and physics priors arrays from DataManager.
-        Features match your previous pipeline to keep plots consistent.
+        Build X, y and physics priors arrays from DataManager. Also returns feature names.
+
+        Parameters:
+            - data_manager     [DataManager] : Instance of DataManager with loaded/analyzed data.
+            - include_distance [bool]        : Whether to include distance as a feature.
+            - include_width    [bool]        : Whether to include tag width as a feature.
+        
+        Returns:
+            - X                [np.ndarray]  : Feature matrix.
+            - y                [np.ndarray]  : True angles.
+            - feature_names    [list]        : List of feature names.
+            - prior_estimates  [dict]        : Dictionary of prior estimates from physics methods.
         """
+        # Verify data is analyzed
         if data_manager.results is None:
             data_manager.analyze_all_data(save_results=False)
-
+        # Extract features
         all_features, all_angles = [], []
         prior_estimates = {'ds': [], 'weighted': [], 'music': [], 'phase': []}
-        feature_names = []
-
+        feature_names   = []
         for idx, meta_row in enumerate(data_manager.metadata.iterrows()):
-            meta = meta_row[1]
+            meta    = meta_row[1]
             signals = data_manager.signal_data[idx]
             phasor1, phasor2 = signals['phasor1'], signals['phasor2']
             rssi1, rssi2     = signals['rssi1'],  signals['rssi2']
-
             true_angle = data_manager.get_true_angle(meta['D'], meta['W'])
             res_row    = data_manager.results.iloc[idx]
             prior_estimates['ds'].append(res_row['theta_ds'])
             prior_estimates['weighted'].append(res_row['theta_weighted'])
             prior_estimates['music'].append(res_row['theta_music'])
             prior_estimates['phase'].append(res_row['theta_phase'])
-
             # Core phasor and RSSI features
             phase1_mean = np.angle(np.mean(phasor1))
             phase2_mean = np.angle(np.mean(phasor2))
@@ -158,7 +177,6 @@ class BayesianAoARegressor:
             ph1_r, ph1_i = np.mean(phasor1.real), np.mean(phasor1.imag)
             ph2_r, ph2_i = np.mean(phasor2.real), np.mean(phasor2.imag)
             wavelength = meta['lambda']
-
             if len(feature_names) == 0:
                 feature_names.extend([
                     'phase1_mean','phase2_mean','phase_diff',
@@ -168,7 +186,6 @@ class BayesianAoARegressor:
                     'phasor2_real_mean','phasor2_imag_mean',
                     'wavelength'
                 ])
-
             feats = [
                 phase1_mean, phase2_mean, phase_diff,
                 mag1_mean, mag2_mean,
@@ -189,70 +206,97 @@ class BayesianAoARegressor:
             all_features.append(feats)
             all_angles.append(true_angle)
 
-        X = np.array(all_features)
-        y = np.array(all_angles)
+        X = np.array(all_features) # Matrix of shape [N, num_features] - Feature matrix.
+        y = np.array(all_angles)   # Vector of shape [N]               - True angles.
         for k in prior_estimates:
-            prior_estimates[k] = np.array(prior_estimates[k])
-
+            prior_estimates[k] = np.array(prior_estimates[k]) # Vector of shape [N] - Prior estimates from physics methods.
+    
         self.feature_names = feature_names
         return X, y, feature_names, prior_estimates
 
     # ---------------------------------------------- Hierarchical Pyro Model ------------------------------------------------ #
-    def _build_model(self, input_dim, prior_mean, prior_std):
+    def _build_model(self, input_dim):
+        """
+        Build the hierarchical Bayesian model using Pyro. The model includes:
+            - A linear layer with physics-informed weight priors.
+            - A global noise parameter tau (HalfNormal prior).
+            - Observation model incorporating optional physics side-channel.
+            - Observation noise with fixed small stddev (obs_sigma).
+
+        Parameters:
+            - input_dim [int] : Dimensionality of input features.
+
+        Returns:
+            - model     [PyroModule] : The constructed Pyro model.
+        """
         obs_sigma = self.obs_sigma
-        device = self.device
+        device    = self.device
 
         class HierarchicalAoA(PyroModule):
+            """
+            Physics-informed Hierarchical Bayesian AoA model. 
+
+            Model:
+                - Linear layer: mean_i = w^T x_i + b
+                - theta_i ~ Normal(mean_i, tau)
+                - (optional) mu_phys_i ~ Normal(theta_i, sigma_phys_i)
+                - y_i ~ Normal(theta_i, obs_sigma)
+            Inference:
+                - AutoNormal guide over GLOBALS ONLY (hide local 'theta').
+            """
             def __init__(self, input_dim):
                 super().__init__()
-                self.device = device
-                self.obs_sigma = torch.tensor(float(obs_sigma), device=device)
+                self.device    = device # Ensure model parameters are on the correct device (CPU/GPU)
+                self.obs_sigma = torch.tensor(float(obs_sigma), device=device) # Fixed observation noise stddev
 
-                # Linear layer
+                # Linear layer: Linear regression component of the model - Maps input features to mean AoA
                 self.linear = PyroModule[torch.nn.Linear](input_dim, 1).to(device)
 
-                # Weight prior: zero mean, physics-informed scale
+                # Weight Prior: Zero mean, physics-informed scale
                 w_loc   = torch.zeros((1, input_dim), device=device)
                 w_scale = torch.full((1, input_dim), 1.0 / max(1, input_dim**0.5), device=device)
                 self.linear.weight = PyroSample(
                     lambda self: dist.Normal(w_loc, w_scale).to_event(1)
                 )
 
-                # Bias prior: scalar Normal
+                # Bias prior: Scalar Normal
                 self.linear.bias = PyroSample(
                     lambda self: dist.Normal(loc=torch.tensor(0.0, device=device),
                                              scale=torch.tensor(5.0, device=device))
                 )
 
             def forward(self, x, mu_phys=None, sigma_phys=None, y=None):
+                # STEP 1: Move inputs to correct device if necessary
                 if x.device != self.device:
                     x = x.to(self.device)
+                # STEP 2: Move optional inputs to correct device if necessary
                 if mu_phys is not None and mu_phys.device != self.device:
                     mu_phys = mu_phys.to(self.device)
                 if sigma_phys is not None and sigma_phys.device != self.device:
                     sigma_phys = sigma_phys.to(self.device)
+                # STEP 3: Move GT to correct device if necessary
                 if y is not None and y.device != self.device:
                     y = y.to(self.device)
-
+                # STEP 4: Compute mean predictions
                 mean = self.linear(x).squeeze(-1)   # [N]
-
-                # Sample tau directly here (HalfNormal)
+                # STEP 5: Sample tau directly here (HalfNormal)
                 tau_raw = pyro.sample("tau_raw", dist.HalfNormal(scale=torch.tensor(5.0, device=self.device)))
                 tau = tau_raw + 1e-3
-
+                # STEP 6: Local latent variable theta for each data point
                 with pyro.plate("data", x.shape[0]):
+                    # Sample theta_i ~ Normal(mean_i, tau)
                     theta = pyro.sample("theta", dist.Normal(mean, tau))
-
+                    # Optional physics side-channel
                     if mu_phys is not None and sigma_phys is not None:
                         pyro.sample("phys_obs", dist.Normal(theta, sigma_phys), obs=mu_phys)
-
+                    # Observation model
                     if y is not None:
                         pyro.sample("obs", dist.Normal(theta, self.obs_sigma), obs=y)
                     else:
                         pyro.sample("obs", dist.Normal(theta, self.obs_sigma))
 
                 return mean
-
+        # Instantiate model
         model = HierarchicalAoA(input_dim)
 
         # Ensure params on device
@@ -264,19 +308,33 @@ class BayesianAoARegressor:
 
     # -------------------------------------------------------- Training ------------------------------------------------------ #
     def train(self, data_manager, num_epochs=2000, learning_rate=1e-3, batch_size=128, weight_decay=0.0, verbose=True):
+        """
+        Train the hierarchical Bayesian AoA model.
+
+        Parameters:
+            - data_manager [DataManager] : Instance of DataManager with loaded/analyzed data.
+            - num_epochs   [int]         : Number of training epochs.
+            - learning_rate[int]         : Learning rate for the optimizer.
+            - batch_size   [int]         : Mini-batch size for training.
+            - weight_decay [float]       : Weight decay (L2 regularization) for the optimizer.
+            - verbose      [bool]        : Whether to print training progress.
+        
+        Returns:
+            - train_summary [dict]       : Dictionary containing training results and metrics.
+        """
+        # Feature Set Up and Extraction
         include_distance = self.feature_mode == 'full'
         include_width    = self.feature_mode in ['full','width_only']
-
         X, y, feature_names, prior_estimates = self._extract_features(data_manager, include_distance, include_width)
 
-        # Split
+        # Split train/test data
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1, random_state=42)
 
         # Split priors (for comparison/plots)
         prior_splits = {k: train_test_split(prior_estimates[k], test_size=0.1, random_state=42)[1]
                         for k in prior_estimates}
 
-        # Standardize per-feature (keeping your previous approach)
+        # Standardize per-feature
         self.scalers = []
         X_train_s = np.zeros_like(X_train)
         X_test_s  = np.zeros_like(X_test)
@@ -293,17 +351,17 @@ class BayesianAoARegressor:
         yte = torch.tensor(y_test,    dtype=torch.float32, device=self.device)
 
         # Physics side-channel for training/eval (derive from results: use weighted as mu_phys, RMSE as sigma_phys)
-        # If you already store sigmas elsewhere, wire them here.
         mu_phys_all   = prior_estimates['weighted']
-        sigma_phys_all= np.abs(prior_estimates['weighted'] - y)  # crude per-sample sigma; replaced by constant below if preferred
-
-        # To keep stability and your "single σᵧ" spirit, we can also set sigma_phys to a moderate constant derived from train RMSE of physics:
+        sigma_phys_all= np.abs(prior_estimates['weighted'] - y)  # crude per-sample sigma;
+        # Set sigma_phys to a moderate constant derived from train RMSE of physics:
         physics_rmse = float(np.sqrt(np.mean((prior_estimates['weighted'] - y)**2)))
         sigma_phys_all = np.full_like(y, fill_value=max(physics_rmse, 1e-3))
 
+        # Split physics info. into train/test
         mu_phys_tr, mu_phys_te = train_test_split(mu_phys_all,    test_size=0.1, random_state=42)
         sp_tr,     sp_te       = train_test_split(sigma_phys_all, test_size=0.1, random_state=42)
 
+        # Torch tensors for physics side-channel
         mu_tr = torch.tensor(mu_phys_tr, dtype=torch.float32, device=self.device)
         mu_te = torch.tensor(mu_phys_te, dtype=torch.float32, device=self.device)
         sp_tr = torch.tensor(sp_tr,      dtype=torch.float32, device=self.device)
@@ -336,7 +394,7 @@ class BayesianAoARegressor:
         optimizer = pyro_optim.ClippedAdam({"lr": 5e-4, "weight_decay": weight_decay, "clip_norm": 5.0})
         svi = SVI(self.model, self.guide, optimizer, loss=Trace_ELBO())
 
-        # -------- Training loop with mini-batching -------- #
+        # Training loop with mini-batching 
         n = Xtr.shape[0]
         losses = []
         for epoch in range(num_epochs):
@@ -350,8 +408,7 @@ class BayesianAoARegressor:
             if not np.isfinite(epoch_loss):
                 print("[train] Detected non-finite loss. Stopping early.")
                 break
-
-            # Optional: check guide params for NaN
+            # Check guide params for NaN
             bad = False
             for name, p in self.guide.named_parameters():
                 if torch.isnan(p).any() or torch.isinf(p).any():
@@ -363,7 +420,7 @@ class BayesianAoARegressor:
             if verbose and ((epoch+1) % 100 == 0 or epoch == 0):
                 print(f"[train] Epoch {epoch+1}/{num_epochs} - ELBO Loss: {epoch_loss:.4f}")
 
-        # -------- Posterior predictive over theta on test -------- #
+        # Posterior predictive over theta on test
         with torch.no_grad():
             predictive = Predictive(self.model, guide=self.guide, num_samples=1000, return_sites=["theta"])
             theta_samples = predictive(Xte, mu_te, sp_te, None)["theta"]   # [S, Nte]
@@ -371,6 +428,7 @@ class BayesianAoARegressor:
             y_pred_std  = theta_samples.std(dim=0).cpu().numpy()
             y_pred_samples = theta_samples.cpu().numpy()                   # [S, Nte]
 
+        # Compute metrics
         mae  = mean_absolute_error(y_test, y_pred_mean)
         rmse = np.sqrt(mean_squared_error(y_test, y_pred_mean))
 
@@ -399,23 +457,42 @@ class BayesianAoARegressor:
 
     # -------------------------------------------------------- Inference ----------------------------------------------------- #
     def predict(self, X, mu_phys=None, sigma_phys=None, num_samples=1000, return_uncertainty=True, batch_size=512):
+        """
+        Make predictions using the trained hierarchical Bayesian AoA model.
+
+        Parameters:
+            - X                  [np.ndarray] : Feature matrix for prediction.
+            - mu_phys            [np.ndarray] : Optional physics prior means for each sample.
+            - sigma_phys         [np.ndarray] : Optional physics prior stddevs for each sample.
+            - num_samples        [int]        : Number of posterior samples to draw.
+            - return_uncertainty [bool]       : Whether to return uncertainty (stddev) along with mean predictions.
+            - batch_size         [int]        : Batch size for prediction to manage memory usage.
+
+        Returns:
+            - mean               [np.ndarray] : Mean predictions.
+            - std                [np.ndarray] : (Optional) Standard deviation of predictions.
+        """
+        # Verify that the model is created.
         if self.model is None:
             raise ValueError("Train the model before calling predict().")
 
-        # scale X
+        # Scale X
         Xs = np.zeros_like(X)
         for i in range(X.shape[1]):
             Xs[:, i] = self.scalers[i].transform(X[:, [i]]).ravel()
         Xt = torch.tensor(Xs, dtype=torch.float32, device=self.device)
 
+        # Prepare physics side-channel if provided
         if mu_phys is None:
             mu_phys = np.zeros(X.shape[0], dtype=np.float32)
         if sigma_phys is None:
             sigma_phys = np.full(X.shape[0], fill_value=self.obs_sigma, dtype=np.float32)
 
+        # Torch tensors for physics side-channel
         mu_t = torch.tensor(mu_phys,   dtype=torch.float32, device=self.device)
         sp_t = torch.tensor(sigma_phys,dtype=torch.float32, device=self.device)
 
+        # Posterior predictive sampling in batches
         predictive = Predictive(self.model, guide=self.guide, num_samples=num_samples, return_sites=["theta"])
         all_theta = []
         with torch.no_grad():
@@ -424,6 +501,7 @@ class BayesianAoARegressor:
                 all_theta.append(out["theta"].cpu().numpy())   # [S, B]
         theta = np.concatenate(all_theta, axis=1)  # [S, N]
 
+        # Compute mean and uncertainty
         mean = theta.mean(axis=0)
         if return_uncertainty:
             std  = theta.std(axis=0)
@@ -432,12 +510,23 @@ class BayesianAoARegressor:
 
     # -------------------------------------------------------- Visualization ------------------------------------------------- #
     def visualize_results(self, output_dir, experiment_name):
+        """
+        Visualize training results including predicted vs true angles, loss curves, error distributions, and posterior weight summaries.
+
+        Parameters:
+            - output_dir      [str] : Directory to save visualizations.
+            - experiment_name [str] : Name of the experiment (used for subdirectory).
+        
+        Returns:
+            - None
+        """
         if self.train_summary is None:
             raise ValueError("Train the model first.")
-
+        # Create output directory
         vis_dir = os.path.join(output_dir, "bayesian_model", experiment_name)
         os.makedirs(vis_dir, exist_ok=True)
 
+        # Extract training summary
         y_test = self.train_summary['y_test']
         y_pred_mean = self.train_summary['y_pred_mean']
         y_pred_std  = self.train_summary['y_pred_std']
@@ -445,6 +534,7 @@ class BayesianAoARegressor:
         prior_test = self.train_summary['prior_test']
         losses = self.train_summary['losses']
 
+        # Plot settings
         plt.rc('text', usetex=True)
         plt.rc('font', family='serif')
 
@@ -454,15 +544,12 @@ class BayesianAoARegressor:
         plt.plot([mn, mx], [mn, mx], 'r--', label='Perfect Prediction')
         plt.errorbar(y_test, y_pred_mean, yerr=2*y_pred_std, fmt='o', alpha=0.8,
                      label='Bayesian Predictions (2$\\sigma$)', markersize=MARKER_SIZE)
-
         prior_colors = {'ds': 'g', 'weighted': 'm', 'music': 'c', 'phase': 'y'}
         prior_markers= {'ds': '^', 'weighted': 's', 'music': 'd', 'phase': 'x'}
         prior_labels = {'ds': 'DS', 'weighted': 'WDS', 'music': 'MUSIC', 'phase': 'PD'}
-
         for key in prior_test:
             plt.scatter(y_test, prior_test[key], marker=prior_markers[key],
                         color=prior_colors[key], alpha=0.35, s=70, label=f"{prior_labels[key]}")
-
         plt.xlabel('True Angle (degrees)')
         plt.ylabel('Predicted Angle (degrees)')
         plt.title(f'Hierarchical Bayesian AoA ({self.prior_type.upper()} prior)\n'
@@ -495,7 +582,6 @@ class BayesianAoARegressor:
         plt.title('Error Distribution (Model)')
         plt.grid(True, alpha=0.3)
         plt.legend()
-
         plt.subplot(2, 1, 2)
         for key in prior_test:
             pe = prior_test[key] - y_test
@@ -506,7 +592,6 @@ class BayesianAoARegressor:
         plt.title('Error Distribution (Physics Methods)')
         plt.grid(True, alpha=0.3)
         plt.legend()
-
         plt.tight_layout()
         plt.savefig(os.path.join(vis_dir, "error_distribution.png"), dpi=300, bbox_inches='tight')
         plt.close()
@@ -522,7 +607,6 @@ class BayesianAoARegressor:
                 post_means['bias'] = param.detach().cpu().numpy()
             elif 'AutoNormal.scale' in name and 'linear.bias' in name:
                 post_scales['bias'] = np.abs(param.detach().cpu().numpy())
-
         if 'weights' in post_means:
             importance = np.abs(post_means['weights'][0])
             top_idx = np.argsort(importance)[-8:]
@@ -578,7 +662,6 @@ class BayesianAoARegressor:
         plt.tight_layout()
         plt.savefig(os.path.join(vis_dir, "uncertainty_analysis.png"), dpi=300, bbox_inches='tight')
         plt.close()
-
         # Save a textual summary
         with open(os.path.join(vis_dir, "model_summary.txt"), 'w') as f:
             f.write("Hierarchical Bayesian AoA Model Summary\n")
@@ -589,7 +672,6 @@ class BayesianAoARegressor:
             f.write("Physics-based comparison:\n")
             for key, metrics in self.train_summary['prior_metrics'].items():
                 f.write(f"  {key.upper()}: MAE={metrics['mae']:.4f}°, RMSE={metrics['rmse']:.4f}°\n")
-        
         with open(os.path.join(vis_dir, "weights_bias_summary.txt"), 'w') as f:
             f.write("Posterior Weights and Bias (mean ± 2σ)\n")
             f.write("=====================================\n")
@@ -604,6 +686,16 @@ class BayesianAoARegressor:
                 f.write(f"\nBias: {mu:.4f} ± {2*sd:.4f}\n")
 
     def render_model_and_guide(self, output_dir, experiment_name):
+        """
+        Render and save the model structure, guide distributions, and graphical model.
+
+        Parameters:
+            - output_dir      [str] : Directory to save visualizations.
+            - experiment_name [str] : Name of the experiment (used for subdirectory).
+
+        Returns:
+            - None
+        """
         if self.model is None or self.guide is None:
             raise ValueError("Train the model first.")
 
@@ -666,6 +758,17 @@ class BayesianAoARegressor:
         plt.close()
 
     def visualize_prior_vs_posterior(self, output_dir, experiment_name, num_samples=5):
+        """
+        Visualize prior vs posterior distributions for a subset of test samples.
+
+        Parameters:
+            - output_dir      [str] : Directory to save visualizations.
+            - experiment_name [str] : Name of the experiment (used for subdirectory).
+            - num_samples     [int] : Number of test samples to visualize.
+
+        Returns:
+            - None
+        """
         if self.train_summary is None:
             raise ValueError("Train first.")
         vis_dir = os.path.join(output_dir, "bayesian_model", experiment_name)
@@ -677,7 +780,6 @@ class BayesianAoARegressor:
         prior_test  = self.train_summary['prior_test']
 
         if self.prior_type in self.train_summary['prior_metrics']:
-            # proxy std from MAE (conservative)
             prior_std = max(0.1, self.train_summary['prior_metrics'][self.prior_type]['mae'])
         else:
             prior_std = 1.0
@@ -696,7 +798,6 @@ class BayesianAoARegressor:
             true_angle = y_test[idx]
             post_mu, post_sd = y_pred_mean[idx], y_pred_std[idx]
             prior_mu = prior_test[self.prior_type][idx] if self.prior_type in prior_test else 0.0
-
             rng = 4*max(prior_std, post_sd)
             x = np.linspace(min(prior_mu, post_mu)-rng, max(prior_mu, post_mu)+rng, 800)
             ax.plot(x, norm.pdf(x, prior_mu, prior_std), 'r--', lw=2, label=f'{self.prior_type.upper()} Prior')
@@ -707,27 +808,34 @@ class BayesianAoARegressor:
             ax.set_xlabel('Angle (°)'); ax.set_ylabel('Density')
             ax.set_title(f'Sample {i+1}: Prior vs Posterior (True: {true_angle:.2f}°)')
             ax.grid(True, alpha=0.3); ax.legend()
-
         plt.tight_layout()
         fig.savefig(os.path.join(vis_dir, "prior_vs_posterior.png"), dpi=300, bbox_inches='tight')
         plt.close(fig)
 
 
     def plot_posterior_predictive(self, output_dir, experiment_name):
+        """
+        Plot the posterior predictive distribution over the test set.
+
+        Parameters:
+            - output_dir      [str] : Directory to save visualizations.
+            - experiment_name [str] : Name of the experiment (used for subdirectory).
+
+        Returns:
+            - None
+        """
         if self.train_summary is None:
             raise ValueError("Train first.")
         vis_dir = os.path.join(output_dir, "bayesian_model", experiment_name)
         os.makedirs(vis_dir, exist_ok=True)
-
         y_test = self.train_summary['y_test']
         S, N = self.train_summary['y_pred_samples'].shape
-        # Already theta samples; convert to a nice band plot
+        # Convert to a band plot
         yp = self.train_summary['y_pred_samples']  # [S, N]
         sort_idx = np.argsort(y_test)
         y_test_sorted = y_test[sort_idx]
         y5, y25, y50, y75, y95 = np.percentile(yp[:, sort_idx], [5,25,50,75,95], axis=0)
         print("Interval widths:", np.mean(y95 - y5), np.mean(y75 - y25))
-
         plt.figure(figsize=(12, 8))
         plt.fill_between(range(N), y5, y95, alpha=0.2, color='skyblue', label='90% CI')
         plt.fill_between(range(N), y25, y75, alpha=0.4, color='dodgerblue', label='50% CI')
@@ -742,16 +850,24 @@ class BayesianAoARegressor:
         plt.close()
 
     def plot_uncertainty_calibration(self, output_dir, experiment_name):
+        """
+        Plot uncertainty calibration using standardized errors and KS test.
+
+        Parameters:
+            - output_dir      [str] : Directory to save visualizations.
+            - experiment_name [str] : Name of the experiment (used for subdirectory).
+
+        Returns:
+            - None
+        """
         if self.train_summary is None:
             raise ValueError("Train first.")
         vis_dir = os.path.join(output_dir, "bayesian_model", experiment_name)
         os.makedirs(vis_dir, exist_ok=True)
-
         y_test = self.train_summary['y_test']
         mu = self.train_summary['y_pred_mean']
         sd = self.train_summary['y_pred_std']
         z = (y_test - mu) / np.maximum(sd, 1e-9)
-
         plt.figure(figsize=(10, 8))
         plt.hist(z, bins=20, density=True, alpha=0.6, label='Standardized Errors')
         x = np.linspace(-4, 4, 1000)
@@ -760,7 +876,6 @@ class BayesianAoARegressor:
         plt.ylabel('Density')
         plt.title('Uncertainty Calibration')
         plt.legend(); plt.grid(True, alpha=0.3)
-
         ks_stat, ks_p = kstest(z, 'norm')
         plt.text(0.05, 0.95, f'KS: stat={ks_stat:.3f}, p={ks_p:.3f}',
                  transform=plt.gca().transAxes, bbox=dict(facecolor='white', alpha=0.8))
@@ -770,11 +885,21 @@ class BayesianAoARegressor:
 
     # ---------------- Optional analysis using posterior weights (kept from baseline) ---------------- #
     def analyze_with_posterior_weights(self, data_manager, output_dir, experiment_name):
+        """
+        Analyze selected samples using the posterior weight mean to create a weighted spectrum.
+
+        Parameters:
+            - data_manager    [DataManager] : DataManager instance with signal and metadata.
+            - output_dir      [str]         : Directory to save analysis results.
+            - experiment_name [str]         : Name of the experiment (used for subdirectory).
+        
+        Returns:
+            - None
+        """
         if self.model is None:
             raise ValueError("Train first.")
         analysis_dir = os.path.join(output_dir, "bayesian_model", experiment_name, "posterior_weighted_analysis")
         os.makedirs(analysis_dir, exist_ok=True)
-
         # Extract posterior weight mean
         weight_loc = None
         for name, p in self.guide.named_parameters():
@@ -782,12 +907,9 @@ class BayesianAoARegressor:
                 weight_loc = p.detach().cpu().numpy()
         if weight_loc is None:
             raise ValueError("Could not extract posterior weights")
-
         if data_manager.results is None:
             data_manager.analyze_all_data(save_results=False)
-
         test_indices = np.linspace(0, len(data_manager.metadata)-1, 5, dtype=int)
-
         for idx in test_indices:
             meta = data_manager.metadata.iloc[idx]
             signals = data_manager.signal_data[idx]
@@ -795,24 +917,18 @@ class BayesianAoARegressor:
             true_angle = data_manager.get_true_angle(D, W)
             phasor1, phasor2 = signals['phasor1'], signals['phasor2']
             rssi1, rssi2 = signals['rssi1'], signals['rssi2']
-
             analysis_aoa = np.arange(main.MIN_ANGLE, main.MAX_ANGLE + main.STEP, main.STEP)
             original = main.analyze_aoa(phasor1, phasor2, rssi1, rssi2, L, wavelength, analysis_aoa, true_angle)
-
             feats = self._extract_features_for_sample(phasor1, phasor2, rssi1, rssi2, D, W, wavelength)
             scaled = np.zeros_like(feats)
             for i in range(feats.shape[0]):
                 scaled[i] = self.scalers[i].transform([[feats[i]]])[0][0]
-
             X_tensor = torch.tensor(scaled, dtype=torch.float32).unsqueeze(0).to(self.device)
             with torch.no_grad():
                 pred = self.model.linear(X_tensor).squeeze(-1).item()
-
             bayesian_aoa = np.arange(main.BAYESIAN_MIN_ANGLE, main.BAYESIAN_MAX_ANGLE + main.STEP, main.STEP)
             batch_size = len(bayesian_aoa)
             feature_batch = np.tile(scaled, (batch_size, 1))
-            # if you had angle-dependent engineered features, update here (kept simple)
-
             batch_tensor = torch.tensor(feature_batch, dtype=torch.float32, device=self.device)
             weighted_spectrum = np.zeros(batch_size)
             chunk = 128
@@ -821,17 +937,14 @@ class BayesianAoARegressor:
                 with torch.no_grad():
                     out = self.model.linear(batch_tensor[s:e]).squeeze(-1).cpu().numpy()
                     weighted_spectrum[s:e] = out
-
             weighted_spectrum = np.exp(-(weighted_spectrum - pred)**2)
             weighted_spectrum /= max(weighted_spectrum.max(), 1e-9)
             weighted_angle = bayesian_aoa[np.argmax(weighted_spectrum)]
-
             # plots
             plt.figure(figsize=(12, 8))
             plt.subplot(2, 1, 1)
             plt.plot(analysis_aoa, original['spectra']['ds'], 'r-', label='Original DS')
             plt.plot(analysis_aoa, original['spectra']['weighted'], 'm--', label='Original Weighted')
-
             full = np.zeros_like(analysis_aoa, dtype=float)
             i0 = np.searchsorted(analysis_aoa, main.BAYESIAN_MIN_ANGLE)
             i1 = np.searchsorted(analysis_aoa, main.BAYESIAN_MAX_ANGLE)
@@ -841,7 +954,6 @@ class BayesianAoARegressor:
                 if j < len(weighted_spectrum):
                     full[i] = weighted_spectrum[j]
             plt.plot(analysis_aoa, full, 'g-', lw=2, label='Bayesian Weighted (±15°)')
-
             plt.axvspan(main.BAYESIAN_MIN_ANGLE, main.BAYESIAN_MAX_ANGLE, color='lightgreen', alpha=0.2, label='Bayesian Range')
             plt.axvline(original['angles']['ds'], color='r', ls=':', label='DS Est.')
             plt.axvline(original['angles']['weighted'], color='m', ls=':', label='Weighted Est.')
@@ -850,7 +962,6 @@ class BayesianAoARegressor:
             plt.xlabel('Angle (°)'); plt.ylabel('Normalized Power')
             plt.title(f'Spectrum Comparison (D={D:.2f}m, W={W:.2f}m)')
             plt.grid(True, alpha=0.3); plt.legend()
-
             plt.subplot(2, 1, 2)
             methods = ['Phase','DS','Weighted','MUSIC','Bayesian']
             errors = [
@@ -865,13 +976,27 @@ class BayesianAoARegressor:
             plt.grid(True, alpha=0.3)
             for i, v in enumerate(errors):
                 plt.text(i, v + 0.1, f'{v:.2f}°', ha='center')
-
             plt.tight_layout()
             plt.savefig(os.path.join(analysis_dir, f'posterior_weighted_D{D:.2f}_W{W:.2f}.png'),
                         dpi=300, bbox_inches='tight')
             plt.close()
 
     def _extract_features_for_sample(self, phasor1, phasor2, rssi1, rssi2, D, W, wavelength):
+        """
+        Extract features for a single sample based on the specified feature mode.
+
+        Parameters:
+            - phasor1    [np.ndarray] : Phasor data from antenna 1.
+            - phasor2    [np.ndarray] : Phasor data from antenna 2.
+            - rssi1      [np.ndarray] : RSSI data from antenna 1.
+            - rssi2      [np.ndarray] : RSSI data from antenna 2.
+            - D          [float]      : Distance between antennas.
+            - W          [float]      : Width of the antenna array.
+            - wavelength [float]      : Wavelength of the signal.
+
+        Returns:
+            - features   [np.ndarray] : Extracted feature vector.
+        """
         phase1_mean = np.angle(np.mean(phasor1))
         phase2_mean = np.angle(np.mean(phasor2))
         phase_diff  = np.angle(np.exp(1j * (phase1_mean - phase2_mean)))
@@ -882,7 +1007,6 @@ class BayesianAoARegressor:
         rssi_diff   = rssi1_mean - rssi2_mean
         ph1_r, ph1_i = np.mean(phasor1.real), np.mean(phasor1.imag)
         ph2_r, ph2_i = np.mean(phasor2.real), np.mean(phasor2.imag)
-
         features = np.array([
             phase1_mean, phase2_mean, phase_diff,
             mag1_mean, mag2_mean,
@@ -890,7 +1014,6 @@ class BayesianAoARegressor:
             ph1_r, ph1_i, ph2_r, ph2_i,
             wavelength
         ])
-
         if self.feature_mode in ['full', 'width_only']:
             features = np.append(features, W)
         if self.feature_mode == 'full':
