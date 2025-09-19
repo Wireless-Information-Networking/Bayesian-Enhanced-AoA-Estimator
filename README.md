@@ -7,6 +7,9 @@ AoA estimator for passive UHF RFID based on Bayesian regression and classical an
 - [Bayesian-Enhanced-AoA-Estimator](#bayesian-enhanced-aoa-estimator)
   - [📑 Table of Contents](#-table-of-contents)
   - [🔍 Overview](#-overview)
+  - [🧠 Bayesian Approach](#-bayesian-approach)
+  - [🚀 Getting Started](#-getting-started)
+    - [Quick Start](#quick-start)
   - [📊 Dataset Structure](#-dataset-structure)
     - [📂 File Naming Convention](#-file-naming-convention)
     - [📁 Directory Structure](#-directory-structure)
@@ -26,6 +29,7 @@ AoA estimator for passive UHF RFID based on Bayesian regression and classical an
     - [`/MATLAB`](#matlab)
     - [`/results`](#results)
     - [`/src`](#src)
+  - [📊 Results and Performance](#-results-and-performance)
   - [📄 License](#-license)
 
 ## 🔍 Overview
@@ -41,6 +45,37 @@ The Bayesian-Enhanced-AoA-Estimator provides a comprehensive framework for estim
 4. **Uncertainty Quantification**: Provides confidence metrics for all estimates, essential for real-world deployment.
 
 This approach significantly improves AoA estimation accuracy compared to classical methods alone, particularly in challenging low-SNR environments and multi-path scenarios typical in indoor RFID deployments.
+
+## 🧠 Bayesian Approach
+
+Our Bayesian approach offers several key advantages over traditional methods:
+
+- **Physics-Informed Priors**: Incorporates domain knowledge from classical antenna array theory as priors, making the model robust even with limited data.
+
+- **Hierarchical Modeling**: Employs a hierarchical Bayesian structure to model relationships between physical parameters and observations at multiple levels.
+
+- **Uncertainty Quantification**: Provides full posterior distributions rather than point estimates, enabling confidence-aware decision making.
+
+- **Model Comparison**: Systematically evaluates different prior structures (DS, Weighted, MUSIC, Phase) and feature configurations for optimal performance.
+
+- **Robustness to Noise**: Handles measurement noise and environmental uncertainties through explicit probabilistic modeling.
+
+The Bayesian model is implemented using Pyro, a flexible probabilistic programming framework built on PyTorch.
+
+## 🚀 Getting Started
+
+### Quick Start
+
+1. Clone the repository:
+   ```
+   git clone https://github.com/yourusername/Bayesian-Enhanced-AoA-Estimator.git
+   cd Bayesian-Enhanced-AoA-Estimator
+   ```
+
+2. Run the main script:
+   ```
+   python main.py
+   ```
 
 ## 📊 Dataset Structure
 
@@ -162,7 +197,7 @@ The repository includes Python implementations that use Bayesian methods through
 
 Core implementation of the Bayesian AoA estimator:
 
-- Defines physics-informed prior distributions based on antenna array geometry
+- Defines physics-informed observations based on antenna array geometry
 - Implements probabilistic model for phase and RSSI observations
 - Performs Bayesian inference using Pyro's SVI engine
 - Provides posterior distributions for AoA estimates with uncertainty quantification
@@ -243,6 +278,10 @@ Contains all Python implementations:
 - `music.py`: MUSIC algorithm
 - `phase_difference.py`: Phase-difference methods
 - `visualization.py`: Visualization tools
+
+## 📊 Results and Performance
+
+This section will include detailed performance metrics, comparisons, and visualizations of the Bayesian AoA estimator against classical methods.
 
 ## 📄 License
 
