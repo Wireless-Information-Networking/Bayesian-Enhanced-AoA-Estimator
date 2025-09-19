@@ -293,39 +293,32 @@ def create_dashboard():
         ax_aoa.set_title(f'AoA Estimation vs Width (D = {distance:.2f}m)')
         ax_aoa.grid(True, alpha=0.3)
         ax_aoa.legend()
-        
-        # NEW CODE: Create and save standalone AoA vs Width plot
+        # Create and save standalone AoA vs Width plot
         aoa_width_fig = plt.figure(figsize=(10, 4))
         plt.rc('text', usetex=True)
         plt.rc('font', family='serif')
-        
         plt.plot(widths, theta_true_d, 'k--o', linewidth=2, label='True')
         plt.plot(widths, theta_phase_d, 'b-s', linewidth=2, label='Phase')
         plt.plot(widths, theta_ds_d, 'r-^', linewidth=2, label='DS')
         plt.plot(widths, theta_w_d, 'm-d', linewidth=2, label='DS+RSSI')
         plt.plot(widths, theta_music_d, 'g-o', linewidth=2, label='MUSIC')
-        
         plt.xlabel('Width (m)')
         plt.ylabel('AoA (degrees)')
         plt.title(f'AoA Estimation vs Width (D = {distance:.2f}m)')
         plt.grid(True, alpha=0.3)
         plt.legend()
-        
         # Calculate MAE for subtitle
         mae_phase = np.mean(np.abs(theta_phase_d - theta_true_d))
         mae_ds = np.mean(np.abs(theta_ds_d - theta_true_d))
         mae_w = np.mean(np.abs(theta_w_d - theta_true_d))
         mae_music = np.mean(np.abs(theta_music_d - theta_true_d))
-        
         plt.figtext(0.5, 0.01, 
                     f'MAE: Phase={mae_phase:.1f}°, DS={mae_ds:.1f}°, DS+RSSI={mae_w:.1f}°, MUSIC={mae_music:.1f}°', 
                     ha='center', fontsize=14)
-        
         plt.tight_layout()
         aoa_width_fig.savefig(os.path.join(main.RESULTS_BASE_DIR, f'aoa_vs_width_D{distance:.2f}.png'), 
                              dpi=300, bbox_inches='tight')
         plt.close(aoa_width_fig)
-        
         # 5.6: Create beam spectra subplot for middle width value
         if len(spectra_d) > 0:
             mid_idx = len(spectra_d) // 2
