@@ -45,6 +45,14 @@ def visualize_aoa_results(results, aoa_scan, title=None):
         - aoa_scan [np.ndarray]     : Array of angles used for scanning
         - title    [str] (optional) : Main figure title
     """
+    # Increase default font sizes for paper readability
+    plt.rcParams['font.size'] = 20
+    plt.rcParams['axes.titlesize'] = 22
+    plt.rcParams['axes.labelsize'] = 20
+    plt.rcParams['xtick.labelsize'] = 19
+    plt.rcParams['ytick.labelsize'] = 19
+    plt.rcParams['legend.fontsize'] = 16
+
     #  Use LaTeX for plot typography
     plt.rc('text', usetex=True)
     plt.rc('font', family='serif')
@@ -66,36 +74,56 @@ def visualize_aoa_results(results, aoa_scan, title=None):
     ax1.set_title('Beamforming Spectra Comparison')
     ax1.grid(True, alpha=0.3)
     ax1.legend()
-    # Plot 2: Angle estimation comparison
+    
+    # Plot 2: Method error comparison (simplified)
     ax2 = axes[1]
     methods = ['phase', 'ds', 'weighted', 'music']
     method_names = ['Phase', 'DS', 'DS+RSSI', 'MUSIC']
     colors = ['b', 'r', 'm', 'g']
-    angles = [results['angles'][m] for m in methods]
+    
     if results['angles']['true'] is not None:
+        # Plot only the absolute errors as bars
         errors = [results['errors'][m] for m in methods]
         y_pos = np.arange(len(methods))
-        bars = ax2.bar(y_pos, angles, color=colors, alpha=0.6)
-        ax2.axhline(results['angles']['true'], color='k', linestyle='--', label='True Angle') 
-        # Add error values as text
-        for i, bar in enumerate(bars):
-            ax2.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 2, 
-                    f"Err: {errors[i]:.2f}°", ha='center', va='bottom')
+        
+        # Create error bar chart
+        bars = ax2.bar(y_pos, errors, color=colors, alpha=0.7)
+        
+        # Add text labels on top of bars
+        for i, v in enumerate(errors):
+            ax2.text(i, v + 0.1, f'{v:.1f}°', ha='center', fontsize=14)
+            
+        # Add estimated angles as text at the bottom
+        for i, method in enumerate(methods):
+            est_angle = results['angles'][method]
+            ax2.text(i, -0.3, f'{est_angle:.1f}°', ha='center', fontsize=12, rotation=0)
+            
+        # Set axis labels and limits
+        ax2.set_ylim(0, max(errors) * 1.3)  # Add headroom for text labels
         ax2.set_xticks(y_pos)
         ax2.set_xticklabels(method_names)
-        ax2.set_ylabel('Estimated Angle (degrees)')
-        ax2.set_title('Method Comparison with Errors')
+        ax2.set_ylabel('Absolute Error (degrees)')
+        ax2.set_title('Method Error Comparison')
+        
+        # Add a text annotation for the true angle
+        true_angle = results['angles']['true']
+        ax2.annotate(f'True Angle: {true_angle:.1f}°', 
+                    xy=(0.5, 0.95), xycoords='axes fraction',
+                    ha='center', fontsize=14, 
+                    bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="black", alpha=0.8))
     else:
-        y_pos = np.arange(len(methods))
-        ax2.bar(y_pos, angles, color=colors, alpha=0.6)
-        ax2.set_xticks(y_pos)
-        ax2.set_xticklabels(method_names)
-        ax2.set_ylabel('Estimated Angle (degrees)')
-        ax2.set_title('Method Comparison')
+        # If no true angle is available, show a message
+        ax2.text(0.5, 0.5, 'No true angle available\nfor error comparison', 
+                ha='center', va='center', fontsize=16,
+                transform=ax2.transAxes)
+        ax2.set_xticks([])
+        ax2.set_yticks([])
+    
     ax2.grid(True, alpha=0.3)
+    
     # Main title
     if title:
-        fig.suptitle(title, fontsize=16)
+        fig.suptitle(title, fontsize=22)
     plt.tight_layout()
     return fig
 # =================================================================================================================================== #
@@ -116,6 +144,14 @@ def create_dashboard():
     Returns:
         pd.DataFrame: Results dataframe with all AoA estimates
     """
+    # Increase default font sizes for paper readability
+    plt.rcParams['font.size'] = 18
+    plt.rcParams['axes.titlesize'] = 20
+    plt.rcParams['axes.labelsize'] = 18
+    plt.rcParams['xtick.labelsize'] = 16
+    plt.rcParams['ytick.labelsize'] = 16
+    plt.rcParams['legend.fontsize'] = 16
+
     print("Starting RFID AoA Analysis Dashboard Creation...")
     # Step 1: Create DataManager and import data
     rfid_data = main.DataManager(data_dir=main.DATA_DIRECTORY, tag_id=main.TAG_ID, aoa_range=main.AoA_m)
@@ -247,16 +283,49 @@ def create_dashboard():
             all_results['error_weighted'].append(abs(theta_w_d[w_idx] - true_angle))
             all_results['error_music'].append(abs(theta_music_d[w_idx] - true_angle))
         # 5.5: Plot AoA vs Width
-        ax_aoa.plot(widths, theta_true_d, 'k--o', linewidth=1.5, label='True')
-        ax_aoa.plot(widths, theta_phase_d, 'b-s', linewidth=1.5, label='Phase')
-        ax_aoa.plot(widths, theta_ds_d, 'r-^', linewidth=1.5, label='DS')
-        ax_aoa.plot(widths, theta_w_d, 'm-d', linewidth=1.5, label='DS+RSSI')
-        ax_aoa.plot(widths, theta_music_d, 'g-o', linewidth=1.5, label='MUSIC')
+        ax_aoa.plot(widths, theta_true_d, 'k--o', linewidth=2, label='True')
+        ax_aoa.plot(widths, theta_phase_d, 'b-s', linewidth=2, label='Phase')
+        ax_aoa.plot(widths, theta_ds_d, 'r-^', linewidth=2, label='DS')
+        ax_aoa.plot(widths, theta_w_d, 'm-d', linewidth=2, label='DS+RSSI')
+        ax_aoa.plot(widths, theta_music_d, 'g-o', linewidth=2, label='MUSIC')
         ax_aoa.set_xlabel('Width (m)')
         ax_aoa.set_ylabel('AoA (degrees)')
         ax_aoa.set_title(f'AoA Estimation vs Width (D = {distance:.2f}m)')
         ax_aoa.grid(True, alpha=0.3)
         ax_aoa.legend()
+        
+        # NEW CODE: Create and save standalone AoA vs Width plot
+        aoa_width_fig = plt.figure(figsize=(10, 4))
+        plt.rc('text', usetex=True)
+        plt.rc('font', family='serif')
+        
+        plt.plot(widths, theta_true_d, 'k--o', linewidth=2, label='True')
+        plt.plot(widths, theta_phase_d, 'b-s', linewidth=2, label='Phase')
+        plt.plot(widths, theta_ds_d, 'r-^', linewidth=2, label='DS')
+        plt.plot(widths, theta_w_d, 'm-d', linewidth=2, label='DS+RSSI')
+        plt.plot(widths, theta_music_d, 'g-o', linewidth=2, label='MUSIC')
+        
+        plt.xlabel('Width (m)')
+        plt.ylabel('AoA (degrees)')
+        plt.title(f'AoA Estimation vs Width (D = {distance:.2f}m)')
+        plt.grid(True, alpha=0.3)
+        plt.legend()
+        
+        # Calculate MAE for subtitle
+        mae_phase = np.mean(np.abs(theta_phase_d - theta_true_d))
+        mae_ds = np.mean(np.abs(theta_ds_d - theta_true_d))
+        mae_w = np.mean(np.abs(theta_w_d - theta_true_d))
+        mae_music = np.mean(np.abs(theta_music_d - theta_true_d))
+        
+        plt.figtext(0.5, 0.01, 
+                    f'MAE: Phase={mae_phase:.1f}°, DS={mae_ds:.1f}°, DS+RSSI={mae_w:.1f}°, MUSIC={mae_music:.1f}°', 
+                    ha='center', fontsize=14)
+        
+        plt.tight_layout()
+        aoa_width_fig.savefig(os.path.join(main.RESULTS_BASE_DIR, f'aoa_vs_width_D{distance:.2f}.png'), 
+                             dpi=300, bbox_inches='tight')
+        plt.close(aoa_width_fig)
+        
         # 5.6: Create beam spectra subplot for middle width value
         if len(spectra_d) > 0:
             mid_idx = len(spectra_d) // 2
