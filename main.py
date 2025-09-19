@@ -22,12 +22,12 @@ import src.music               as music              # MUSIC algorithm for high-
 import src.bayesian_regression as br                 # Bayesian regression for machine learning models on AoA data.                   #
 import src.visualization       as vis                # Visualization functions for AoA analysis results.                              #
 import pandas                  as pd                 # Data manipulation and analysis library.                                        #
+import seaborn                 as sns                # Statistical data visualization library.                                        #
+import matplotlib              as mpl                # Comprehensive library for creating visualizations.                             #
+import matplotlib.pyplot       as plt                # MATLAB-like plotting framework.                                                #
 from   tqdm                    import tqdm           # Progress bar for loops, useful for tracking long-running operations.           #
-import seaborn as sns
-import matplotlib as mpl
+from cycler                    import cycler         # Customizing matplotlib color and style cycles.                                 #
 mpl.use('Agg')                                       # Use 'Agg' backend for non-interactive plotting (suitable for scripts).         #
-import matplotlib.pyplot as plt
-from cycler import cycler
 # =================================================================================================================================== #
 
 
@@ -57,48 +57,45 @@ os.makedirs(RESULTS_BASE_DIR, exist_ok=True)                                    
 
 # =================================================================================================================================== #
 # ---------------------------------------------------------- PLOTTING SETTINGS ------------------------------------------------------ #
-COLOR_CYCLE  = ['#1f77b4','#ff7f0e','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf']
-MARKER_CYCLE = ['o','s','D','^','v','<','>','p','P','*']
-custom_cycler = (cycler(color=COLOR_CYCLE) * cycler(marker=MARKER_CYCLE[:len(COLOR_CYCLE)]) * cycler(linestyle=['-']*len(COLOR_CYCLE)))
-
-TITLE_SIZE, LABEL_SIZE, LEGEND_SIZE, TICK_SIZE, ANNOTATION_SIZE = 24, 20, 20, 18, 12
-FIG_WIDTH, FIG_HEIGHT, LINE_WIDTH, MARKER_SIZE = 10, 7, 1.75, 8
-
-plt.style.use("seaborn-v0_8-whitegrid")
-mpl.rcParams['axes.prop_cycle'] = custom_cycler
-plt.rcParams.update({
-    "figure.figsize": (FIG_WIDTH, FIG_HEIGHT),
-    "figure.dpi": 300,
-    "figure.titlesize": TITLE_SIZE,
-    "font.family": "serif",
-    "font.serif": ["Computer Modern Roman", "Times New Roman"],
-    "font.size": LABEL_SIZE,
-    "axes.titlesize": TITLE_SIZE,
-    "axes.labelsize": LABEL_SIZE,
-    "axes.linewidth": 1.2,
-    "axes.grid": True,
-    "axes.grid.which": "both",
-    "axes.grid.axis": "both",
-    "xtick.labelsize": TICK_SIZE,
-    "ytick.labelsize": TICK_SIZE,
-    "xtick.major.width": 1.0,
-    "ytick.major.width": 1.0,
-    "legend.fontsize": LEGEND_SIZE,
-    "legend.framealpha": 0.8,
-    "legend.edgecolor": "0.8",
-    "legend.fancybox": True,
-    "legend.markerscale": 1.2,
-    "lines.linewidth": LINE_WIDTH,
-    "lines.markersize": MARKER_SIZE,
-    "lines.markeredgewidth": 1.2,
-    "text.usetex": True,
-    "text.latex.preamble": r"\usepackage{amsmath,amssymb,amsfonts,mathrsfs}",
-})
-sns.set_theme(style="whitegrid", context="paper", font_scale=1.2)
-
-TAG_NAME = "Belt DEE"
-plt.rc('text', usetex=True)
-plt.rc('font', family='serif')
+COLOR_CYCLE  = ['#1f77b4','#ff7f0e','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf']                  #
+MARKER_CYCLE = ['o','s','D','^','v','<','>','p','P','*']                                                                              #
+custom_cycler = (cycler(color=COLOR_CYCLE) * cycler(marker=MARKER_CYCLE[:len(COLOR_CYCLE)])*cycler(linestyle=['-']*len(COLOR_CYCLE))) #
+TITLE_SIZE, LABEL_SIZE, LEGEND_SIZE, TICK_SIZE, ANNOTATION_SIZE = 24, 20, 20, 18, 12                                                  #
+FIG_WIDTH, FIG_HEIGHT, LINE_WIDTH, MARKER_SIZE = 10, 7, 1.75, 8                                                                       #
+plt.style.use("seaborn-v0_8-whitegrid")                                                                                               #
+mpl.rcParams['axes.prop_cycle'] = custom_cycler                                                                                       #
+plt.rcParams.update({                                                                                                                 #
+    "figure.figsize": (FIG_WIDTH, FIG_HEIGHT),                                                                                        #
+    "figure.dpi": 300,                                                                                                                #
+    "figure.titlesize": TITLE_SIZE,                                                                                                   #
+    "font.family": "serif",                                                                                                           #
+    "font.serif": ["Computer Modern Roman", "Times New Roman"],                                                                       #
+    "font.size": LABEL_SIZE,                                                                                                          #
+    "axes.titlesize": TITLE_SIZE,                                                                                                     #
+    "axes.labelsize": LABEL_SIZE,                                                                                                     #
+    "axes.linewidth": 1.2,                                                                                                            #
+    "axes.grid": True,                                                                                                                #
+    "axes.grid.which": "both",                                                                                                        #
+    "axes.grid.axis": "both",                                                                                                         #
+    "xtick.labelsize": TICK_SIZE,                                                                                                     #
+    "ytick.labelsize": TICK_SIZE,                                                                                                     #
+    "xtick.major.width": 1.0,                                                                                                         #
+    "ytick.major.width": 1.0,                                                                                                         #
+    "legend.fontsize": LEGEND_SIZE,                                                                                                   #
+    "legend.framealpha": 0.8,                                                                                                         #
+    "legend.edgecolor": "0.8",                                                                                                        #
+    "legend.fancybox": True,                                                                                                          #
+    "legend.markerscale": 1.2,                                                                                                        #
+    "lines.linewidth": LINE_WIDTH,                                                                                                    #
+    "lines.markersize": MARKER_SIZE,                                                                                                  #
+    "lines.markeredgewidth": 1.2,                                                                                                     #
+    "text.usetex": True,                                                                                                              #
+    "text.latex.preamble": r"\usepackage{amsmath,amssymb,amsfonts,mathrsfs}",                                                         #
+})                                                                                                                                    #
+sns.set_theme(style="whitegrid", context="paper", font_scale=1.2)                                                                     #
+TAG_NAME = "Belt DEE"                                                                                                                 #
+plt.rc('text', usetex=True)                                                                                                           #
+plt.rc('font', family='serif')                                                                                                        #
 # =================================================================================================================================== #
 
 
@@ -108,6 +105,8 @@ def analyze_aoa(phasor1, phasor2, rssi1, rssi2, L, wavelength, aoa_scan, true_an
     """
     Comprehensive AoA estimation using multiple methods: phase difference,
     standard beamforming, RSSI-weighted beamforming, and MUSIC algorithm.
+    These are used as physics-informed estimations, which are then intrduced
+    into a hierarchal Bayesian regression model for improved accuracy.
     
     Parameters:
         - phasor1    [np.ndarray]       : Complex phasors from antenna 1
@@ -120,7 +119,11 @@ def analyze_aoa(phasor1, phasor2, rssi1, rssi2, L, wavelength, aoa_scan, true_an
         - true_angle [float] (optional) : True angle for error calculation
         
     Returns:
-        - dict: Dictionary with AoA estimates and spectra for all methods
+        - dict: Dictionary containing:
+            - 'angles'     : Estimated angles from each method
+            - 'spectra'    : Beamforming and MUSIC spectra
+            - 'phase_diff' : Phase difference between antennas
+            - 'errors'     : Errors for each method if true_angle is provided
     """
     # 1. Phase difference method
     dphi     = pad.compute_phase_difference(phasor1, phasor2)
@@ -186,9 +189,9 @@ class DataManager:
             - tag_id    [str]         : RFID tag ID to filter the data. Default is TAG_ID.
             - aoa_range [np.ndarray]  : Array of angles for the AoA (theta_m) sweep. Default is AoA_m.
         """
-        self.data_dir  = data_dir
-        self.tag_id    = tag_id
-        self.aoa_range = aoa_range
+        self.data_dir    = data_dir
+        self.tag_id      = tag_id
+        self.aoa_range   = aoa_range
         # Storage Structures
         self.metadata    = None  # Dataframe with scalar metadata for each file.
         self.signal_data = None  # List of dictionaries with NumPy arrays.
@@ -286,7 +289,7 @@ class DataManager:
                 }
                 metadata.append(meta_entry)
                 # STEP 3.12: Create signal data entry (arrays) with consistent lengths
-                min_samples = min(len(phi1), len(phi2), len(rssi1), len(rssi2))
+                min_samples  = min(len(phi1), len(phi2), len(rssi1), len(rssi2))
                 signal_entry = {
                     'phi1'   : phi1[:min_samples],
                     'phi2'   : phi2[:min_samples],
@@ -343,7 +346,7 @@ class DataManager:
         if f0 is not None:
             meta_filter &= (self.metadata.f0 == f0)
         # STEP 2: Get filtered metadata
-        filtered_meta = self.metadata[meta_filter]
+        filtered_meta    = self.metadata[meta_filter]
         # STEP 3: Get corresponding signal data
         filtered_signals = [self.signal_data[i] for i in filtered_meta.index]
         # STEP 4: Return Results
@@ -381,7 +384,7 @@ class DataManager:
         phasor1 = signals['phasor1']
         phasor2 = signals['phasor2']
         # STEP 2: Calculate phase difference
-        dphi = np.angle(np.mean(phasor1)) - np.angle(np.mean(phasor2))
+        dphi    = np.angle(np.mean(phasor1)) - np.angle(np.mean(phasor2))
         # STEP 3: Ensure in correct range
         return np.angle(np.exp(1j * dphi))
     
@@ -449,16 +452,16 @@ class DataManager:
         results_list = []
         # Create output directories if saving results
         if save_results:
-            plots_dir = os.path.join(RESULTS_DIRECTORY, "plots")
+            plots_dir   = os.path.join(RESULTS_DIRECTORY, "plots")
             results_dir = os.path.join(RESULTS_DIRECTORY, "results")
             os.makedirs(plots_dir, exist_ok=True)
             os.makedirs(results_dir, exist_ok=True)
         # Process each entry in the metadata
         for idx, meta in tqdm(self.metadata.iterrows(), total=len(self.metadata), desc="Analyzing data"):
             # Extract parameters
-            D = meta['D']
-            W = meta['W']
-            L = meta['L']
+            D  = meta['D']
+            W  = meta['W']
+            L  = meta['L']
             f0 = meta['f0']
             wavelength = meta['lambda']
             true_angle = self.get_true_angle(D, W)
@@ -466,10 +469,9 @@ class DataManager:
             signals = self.signal_data[idx]
             phasor1 = signals['phasor1']
             phasor2 = signals['phasor2']
-            rssi1 = signals['rssi1']
-            rssi2 = signals['rssi2']
-            # Use a smaller step size for faster analysis
-            analysis_step = 0.5  # Use 0.5 degree steps for faster analysis
+            rssi1   = signals['rssi1']
+            rssi2   = signals['rssi2']
+            analysis_step      = 0.5  
             analysis_aoa_range = np.arange(MIN_ANGLE, MAX_ANGLE + analysis_step, analysis_step)
             # Run AoA analysis
             aoa_results = analyze_aoa(
@@ -478,9 +480,9 @@ class DataManager:
             )
             # Save visualization if requested
             if save_results:
-                # Create a descriptive title
+                # Title
                 title = f"AoA Analysis (D={D:.2f}m, W={W:.2f}m, f={f0/1e6:.2f}MHz, True $\\theta$={true_angle:.2f}deg)"
-                # Create figure
+                # Figure generation
                 fig = vis.visualize_aoa_results(aoa_results, analysis_aoa_range, title)
                 # Create filename
                 filename = f"aoa_D{D:.2f}_W{W:.2f}_f{f0/1e6:.2f}.png"
@@ -558,6 +560,19 @@ class DataManager:
 RESULTS_PICKLE  = os.path.join(RESULTS_BASE_DIR, 'pipeline_results.pkl')
 BAYESIAN_PICKLE = os.path.join(RESULTS_BASE_DIR, 'bayesian_results.pkl')
 def main(run_import=True, run_classical=True, run_bayesian=True):
+    """
+    Main function to execute the AoA estimation pipeline.
+    This function orchestrates the entire process of importing data, performing AoA analysis,
+    generating visualizations, and training Bayesian regression models. 
+
+    Parameters:
+        - run_import    [bool] : Whether to import data from CSV files (True) or load existing DataManager (False).
+        - run_classical [bool] : Whether to run classical AoA analysis (True) or skip it (False).
+        - run_bayesian  [bool] : Whether to train Bayesian regression models (True) or load existing results (False).
+
+    Returns:
+        - None
+    """
     # STEP 1: Create a DataManager instance - RFID_data_manager
     if os.path.exists(RESULTS_PICKLE) and not run_import:
         print(f"Loading existing DataManager from {RESULTS_PICKLE}...")
@@ -649,7 +664,6 @@ def main(run_import=True, run_classical=True, run_bayesian=True):
         bayesian_results = {"results": summaries_only, "best_name": full["best_name"]}
         with open(BAYESIAN_PICKLE, 'wb') as f:
             pickle.dump(bayesian_results, f)
-        #bayesian_results = br.train_hierarchical_models(RFID_data_manager, RESULTS_DIRECTORY, num_epochs=14000)
     # STEP 7: Compare Bayesian Models
     if 'results' in bayesian_results:
       print("\nGenerating Bayesian model comparison plots...")
@@ -667,30 +681,22 @@ def main(run_import=True, run_classical=True, run_bayesian=True):
           else:
               prior, fmode = raw_name, ""
           label = pretty(prior, fmode)
-          # If this came from a full run, entry might be {"mae":..., "rmse":...} already (summary)
-          # If not, adapt here (but our STEP 6 ensures it's always a summary dict)
           pretty_summaries[label] = entry
   
       br.compare_bayesian_models(pretty_summaries, RESULTS_DIRECTORY, EXPERIMENT_NAME)
       print(f"Saved Bayesian model comparison plots to: {RESULTS_DIRECTORY}")
-      # --- ICASSP figures without retraining (use pickled summaries) ---
       try:
-          # --- ICASSP figures (no retrain, just pickled summaries) ---
           # Figure 1: side-by-side MAE/RMSE bars
           br.figure1_model_comparison(pretty_summaries, RESULTS_DIRECTORY, EXPERIMENT_NAME)
-          
           # Figure 2: lines + magnified posterior predictive
           best_label   = min(pretty_summaries, key=lambda k: pretty_summaries[k].get('rmse', float('inf')))
           best_summary = pretty_summaries[best_label]
           br.figure2_lines_and_posterior(best_summary, RESULTS_DIRECTORY, EXPERIMENT_NAME, magnify=20)
-
-      
           print("Saved ICASSP figures to:", os.path.join(RESULTS_DIRECTORY, "bayesian_model", EXPERIMENT_NAME))
       except Exception as e:
           print("[WARN] Failed to generate ICASSP figures:", e)
 
     # STEP 8: Create detailed visualizations for the best model
-    '''
     print("\nGenerating detailed visualizations for best model...")
     # Find the best model (lowest MAE)
     best_model_name = None
@@ -710,7 +716,7 @@ def main(run_import=True, run_classical=True, run_bayesian=True):
         best_model.visualize_weight_distributions(detailed_dir, "best_model")
         print(f"Best model: {best_model_name} (MAE: {best_mae:.4f}°)")
         print(f"Detailed visualizations saved to: {detailed_dir}")
-    '''
+    
     print("AoA analysis completed successfully!")
     return RFID_data_manager, bayesian_results
 
