@@ -11,8 +11,8 @@
 import os                                            # Operating system interfaces for file and directory manipulation.               #
 import glob                                          # Unix style pathname pattern expansion for file searching.                      #
 import re                                            # Regular expression operations for pattern matching in filenames.               #
+import pickle                                        # Object serialization and deserialization.                                      #
 import numpy                   as np                 # Mathematical functions.                                                        #
-import pandas                  as pd                 # Data manipulation and analysis library.                                        #
 import scipy.constants         as sc                 # Physical and mathematical constants.                                           #
 import matplotlib.pyplot       as plt                # Data visualization.                                                            #
 import src.data_management     as dm                 # Data management functions for importing and organizing data.                   #
@@ -21,15 +21,21 @@ import src.beamforming         as bf                 # Beamforming methods for A
 import src.music               as music              # MUSIC algorithm for high-resolution AoA estimation.                            #
 import src.bayesian_regression as br                 # Bayesian regression for machine learning models on AoA data.                   #
 import src.visualization       as vis                # Visualization functions for AoA analysis results.                              #
+import pandas                  as pd                 # Data manipulation and analysis library.                                        #
 from   tqdm                    import tqdm           # Progress bar for loops, useful for tracking long-running operations.           #
+import seaborn as sns
+import matplotlib as mpl
+mpl.use('Agg')                                       # Use 'Agg' backend for non-interactive plotting (suitable for scripts).         #
+import matplotlib.pyplot as plt
+from cycler import cycler
 # =================================================================================================================================== #
 
 
 # =================================================================================================================================== #
 # ------------------------------------------------------- CONFIGURATION SETTINGS ---------------------------------------------------- #
 SCRIPT_DIR         = os.path.dirname(os.path.abspath(__file__))                    # Get the directory of the current script.         #
-# PROJECT_ROOT     = os.path.dirname(SCRIPT_DIR)                                   # Go up one level to project root.                 #
-PROJECT_ROOT       = SCRIPT_DIR                                                    # Use the script directory as the project root.    #
+#PROJECT_ROOT       = os.path.dirname(SCRIPT_DIR)                                  # Go up one level to project root.                 #
+PROJECT_ROOT       = SCRIPT_DIR                                                    # Go up one level to project root.                 #
 DATA_DIRECTORY     = os.path.join(PROJECT_ROOT, 'data', '2025-07-09')              # Directory containing the data files.             #
 RESULTS_BASE_DIR   = os.path.join(PROJECT_ROOT, 'results')                         # Store results in a separate folder.              #
 EXPERIMENT_NAME    = 'AoA_Analysis'                                                # Name of the experiment for output directory.     #
@@ -46,6 +52,53 @@ AoA_m              = np.arange(MIN_ANGLE, MAX_ANGLE + STEP, STEP)               
 c                  = sc.speed_of_light                                             # Speed of light in m/s.                           #
 MIN_DATA_POINTS    = 1                                                             # Min. number of data points required for analysis.#
 os.makedirs(RESULTS_BASE_DIR, exist_ok=True)                                       # Create results directory if it doesn't exist.    #
+# =================================================================================================================================== #
+
+
+# =================================================================================================================================== #
+# ---------------------------------------------------------- PLOTTING SETTINGS ------------------------------------------------------ #
+COLOR_CYCLE  = ['#1f77b4','#ff7f0e','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf']
+MARKER_CYCLE = ['o','s','D','^','v','<','>','p','P','*']
+custom_cycler = (cycler(color=COLOR_CYCLE) * cycler(marker=MARKER_CYCLE[:len(COLOR_CYCLE)]) * cycler(linestyle=['-']*len(COLOR_CYCLE)))
+
+TITLE_SIZE, LABEL_SIZE, LEGEND_SIZE, TICK_SIZE, ANNOTATION_SIZE = 24, 20, 20, 18, 12
+FIG_WIDTH, FIG_HEIGHT, LINE_WIDTH, MARKER_SIZE = 10, 7, 1.75, 8
+
+plt.style.use("seaborn-v0_8-whitegrid")
+mpl.rcParams['axes.prop_cycle'] = custom_cycler
+plt.rcParams.update({
+    "figure.figsize": (FIG_WIDTH, FIG_HEIGHT),
+    "figure.dpi": 300,
+    "figure.titlesize": TITLE_SIZE,
+    "font.family": "serif",
+    "font.serif": ["Computer Modern Roman", "Times New Roman"],
+    "font.size": LABEL_SIZE,
+    "axes.titlesize": TITLE_SIZE,
+    "axes.labelsize": LABEL_SIZE,
+    "axes.linewidth": 1.2,
+    "axes.grid": True,
+    "axes.grid.which": "both",
+    "axes.grid.axis": "both",
+    "xtick.labelsize": TICK_SIZE,
+    "ytick.labelsize": TICK_SIZE,
+    "xtick.major.width": 1.0,
+    "ytick.major.width": 1.0,
+    "legend.fontsize": LEGEND_SIZE,
+    "legend.framealpha": 0.8,
+    "legend.edgecolor": "0.8",
+    "legend.fancybox": True,
+    "legend.markerscale": 1.2,
+    "lines.linewidth": LINE_WIDTH,
+    "lines.markersize": MARKER_SIZE,
+    "lines.markeredgewidth": 1.2,
+    "text.usetex": True,
+    "text.latex.preamble": r"\usepackage{amsmath,amssymb,amsfonts,mathrsfs}",
+})
+sns.set_theme(style="whitegrid", context="paper", font_scale=1.2)
+
+TAG_NAME = "Belt DEE"
+plt.rc('text', usetex=True)
+plt.rc('font', family='serif')
 # =================================================================================================================================== #
 
 
@@ -502,75 +555,142 @@ class DataManager:
 
 # =================================================================================================================================== #
 # ---------------------------------------------------------- MAIN FUNCTION ---------------------------------------------------------- #
-def main():
+RESULTS_PICKLE  = os.path.join(RESULTS_BASE_DIR, 'pipeline_results.pkl')
+BAYESIAN_PICKLE = os.path.join(RESULTS_BASE_DIR, 'bayesian_results.pkl')
+def main(run_import=True, run_classical=True, run_bayesian=True):
     # STEP 1: Create a DataManager instance - RFID_data_manager
-    RFID_data_manager = DataManager(data_dir=DATA_DIRECTORY, tag_id=TAG_ID, aoa_range=AoA_m)
-    # STEP 2: Import data
-    RFID_data_manager.import_data()
-    # STEP 3: Run traditional AoA analysis
-    print("Starting individual file analysis...")
-    results = RFID_data_manager.analyze_all_data(save_results=SAVE_RESULTS)
-    # STEP 4: Generate summary visualizations for individual analysis
-    if SAVE_RESULTS and len(results) > 0:
-        # Create summary plots directory
-        summary_dir = os.path.join(RESULTS_DIRECTORY, "summary")
-        os.makedirs(summary_dir, exist_ok=True)
-        # Plot 1: Error distribution by method
-        plt.figure(figsize=(10, 6))
-        #  Use LaTeX for plot typography
-        plt.rc('text', usetex=True)
-        plt.rc('font', family='serif')
-        methods = ['phase', 'ds', 'weighted', 'music']
-        method_names = ['Phase', 'Beamforming', 'Weighted BF', 'MUSIC']
-        # Create boxplot of errors
-        error_data = [results[f'error_{m}'] for m in methods]
-        plt.boxplot(error_data, labels=method_names)
-        #  Use LaTeX for plot typography
-        plt.rc('text', usetex=True)
-        plt.rc('font', family='serif')
-        plt.ylabel('Error (degrees)')
-        plt.title('AoA Estimation Error by Method')
-        plt.grid(True, alpha=0.3)
-        plt.savefig(os.path.join(summary_dir, "error_comparison.png"), dpi=300)
-        plt.close()
-        # Plot 2: Error vs. Position (scatter plot)
-        plt.figure(figsize=(12, 8))
-        #  Use LaTeX for plot typography
-        plt.rc('text', usetex=True)
-        plt.rc('font', family='serif')
-        for i, m in enumerate(methods):
-            plt.subplot(2, 2, i+1)
-            sc = plt.scatter(results['W'], results['D'], c=results[f'error_{m}'], 
-                           cmap='viridis', alpha=0.8, s=50)
-            plt.colorbar(sc, label='Error (degrees)')
-            plt.xlabel('Width (m)')
-            plt.ylabel('Distance (m)')
-            plt.title(f'{method_names[i]} Error')
+    if os.path.exists(RESULTS_PICKLE) and not run_import:
+        print(f"Loading existing DataManager from {RESULTS_PICKLE}...")
+        with open(RESULTS_PICKLE, 'rb') as f:
+            RFID_data_manager = pickle.load(f)
+    else:
+        print("Creating new DataManager and importing data...")
+        RFID_data_manager = DataManager(data_dir=DATA_DIRECTORY, tag_id=TAG_ID, aoa_range=AoA_m)
+        # STEP 2: Import data
+        RFID_data_manager.import_data()
+        # Save DataManager state
+        with open(RESULTS_PICKLE, 'wb') as f:
+            pickle.dump(RFID_data_manager, f)
+
+    # STEP 3: Run Classical AoA analysis
+    if run_classical:
+        print("Starting individual file analysis...")
+        results = RFID_data_manager.analyze_all_data(save_results=SAVE_RESULTS)
+        # STEP 4: Generate summary visualizations for individual analysis
+        if SAVE_RESULTS and len(results) > 0:
+            # Create summary plots directory
+            summary_dir = os.path.join(RESULTS_DIRECTORY, "summary")
+            os.makedirs(summary_dir, exist_ok=True)
+            # Plot 1: Error distribution by method
+            plt.figure(figsize=(10, 6))
+            #  Use LaTeX for plot typography
+            plt.rc('text', usetex=True)
+            plt.rc('font', family='serif')
+            methods = ['phase', 'ds', 'weighted', 'music']
+            method_names = ['Phase', 'Beamforming', 'Weighted BF', 'MUSIC']
+            # Create boxplot of errors
+            error_data = [results[f'error_{m}'] for m in methods]
+            plt.boxplot(error_data, labels=method_names)
+            #  Use LaTeX for plot typography
+            plt.rc('text', usetex=True)
+            plt.rc('font', family='serif')
+            plt.ylabel('Error (degrees)')
+            plt.title('AoA Estimation Error by Method')
             plt.grid(True, alpha=0.3)
-        plt.tight_layout()
-        plt.savefig(os.path.join(summary_dir, "error_vs_position.png"), dpi=300)
-        plt.close()
-        # Plot 3: Error vs. Frequency
-        plt.figure(figsize=(10, 6))
-        #  Use LaTeX for plot typography
-        plt.rc('text', usetex=True)
-        plt.rc('font', family='serif')
-        for i, m in enumerate(methods):
-            plt.plot(results['f0']/1e6, results[f'error_{m}'], 'o-', label=method_names[i])
-        plt.xlabel('Frequency (MHz)')
-        plt.ylabel('Error (degrees)')
-        plt.title('AoA Estimation Error vs. Frequency')
-        plt.grid(True, alpha=0.3)
-        plt.legend()
-        plt.savefig(os.path.join(summary_dir, "error_vs_frequency.png"), dpi=300)
-        plt.close()
-        print(f"Saved summary visualizations to: {summary_dir}")
-    # STEP 5: Run comprehensive dashboard analysis
-    print("\nStarting comprehensive dashboard analysis...")
-    dashboard_results = vis.create_dashboard()
+            plt.savefig(os.path.join(summary_dir, "error_comparison.png"), dpi=300)
+            plt.close()
+            # Plot 2: Error vs. Position (scatter plot)
+            plt.figure(figsize=(12, 8))
+            #  Use LaTeX for plot typography
+            plt.rc('text', usetex=True)
+            plt.rc('font', family='serif')
+            for i, m in enumerate(methods):
+                plt.subplot(2, 2, i+1)
+                sc = plt.scatter(results['W'], results['D'], c=results[f'error_{m}'], 
+                            cmap='viridis', alpha=0.8, s=50)
+                plt.colorbar(sc, label='Error (degrees)')
+                plt.xlabel('Width (m)')
+                plt.ylabel('Distance (m)')
+                plt.title(f'{method_names[i]} Error')
+                plt.grid(True, alpha=0.3)
+            plt.tight_layout()
+            plt.savefig(os.path.join(summary_dir, "error_vs_position.png"), dpi=300)
+            plt.close()
+            # Plot 3: Error vs. Frequency
+            plt.figure(figsize=(10, 6))
+            #  Use LaTeX for plot typography
+            plt.rc('text', usetex=True)
+            plt.rc('font', family='serif')
+            for i, m in enumerate(methods):
+                plt.plot(results['f0']/1e6, results[f'error_{m}'], 'o-', label=method_names[i])
+            plt.xlabel('Frequency (MHz)')
+            plt.ylabel('Error (degrees)')
+            plt.title('AoA Estimation Error vs. Frequency')
+            plt.grid(True, alpha=0.3)
+            plt.legend()
+            plt.savefig(os.path.join(summary_dir, "error_vs_frequency.png"), dpi=300)
+            plt.close()
+            print(f"Saved summary visualizations to: {summary_dir}")
+        # STEP 5: Run comprehensive dashboard analysis
+        print("\nStarting comprehensive dashboard analysis...")
+        dashboard_results = vis.create_dashboard()
+    else:
+        print("Skipping individual file analysis...")
+
     # STEP 6: Train machine learning model
-    bayesian_results = br.train_bayesian_models(RFID_data_manager, RESULTS_DIRECTORY, num_epochs=14000)
-    # STEP 7: Create detailed visualizations for the best model
+    if os.path.exists(BAYESIAN_PICKLE) and not run_bayesian:
+        print(f"Loading existing Bayesian results from {BAYESIAN_PICKLE}...")
+        with open(BAYESIAN_PICKLE, 'rb') as f:
+            bayesian_results = pickle.load(f)
+    else:
+        print("Starting Bayesian regression analysis...")
+        full = br.train_bayesian_models(RFID_data_manager, RESULTS_DIRECTORY, num_epochs=14000)
+        summaries_only = {name: entry["summary"] for name, entry in full["results"].items()}
+        bayesian_results = {"results": summaries_only, "best_name": full["best_name"]}
+        with open(BAYESIAN_PICKLE, 'wb') as f:
+            pickle.dump(bayesian_results, f)
+        #bayesian_results = br.train_hierarchical_models(RFID_data_manager, RESULTS_DIRECTORY, num_epochs=14000)
+    # STEP 7: Compare Bayesian Models
+    if 'results' in bayesian_results:
+      print("\nGenerating Bayesian model comparison plots...")
+  
+      def pretty(prior_key, fmode_key):
+          prior_map = {"ds":"DS","weighted":"WDS","music":"MUSIC","phase":"PD"}
+          fmode_map = {"full":"Full","width_only":"Width","sensor_only":"Sensor"}
+          return f"{prior_map.get(prior_key, prior_key)} – {fmode_map.get(fmode_key, fmode_key)}"
+  
+      pretty_summaries = {}
+      for raw_name, entry in bayesian_results["results"].items():
+          # raw_name like "ds_full"
+          if "_" in raw_name:
+              prior, fmode = raw_name.split("_", 1)
+          else:
+              prior, fmode = raw_name, ""
+          label = pretty(prior, fmode)
+          # If this came from a full run, entry might be {"mae":..., "rmse":...} already (summary)
+          # If not, adapt here (but our STEP 6 ensures it's always a summary dict)
+          pretty_summaries[label] = entry
+  
+      br.compare_bayesian_models(pretty_summaries, RESULTS_DIRECTORY, EXPERIMENT_NAME)
+      print(f"Saved Bayesian model comparison plots to: {RESULTS_DIRECTORY}")
+      # --- ICASSP figures without retraining (use pickled summaries) ---
+      try:
+          # --- ICASSP figures (no retrain, just pickled summaries) ---
+          # Figure 1: side-by-side MAE/RMSE bars
+          br.figure1_model_comparison(pretty_summaries, RESULTS_DIRECTORY, EXPERIMENT_NAME)
+          
+          # Figure 2: lines + magnified posterior predictive
+          best_label   = min(pretty_summaries, key=lambda k: pretty_summaries[k].get('rmse', float('inf')))
+          best_summary = pretty_summaries[best_label]
+          br.figure2_lines_and_posterior(best_summary, RESULTS_DIRECTORY, EXPERIMENT_NAME, magnify=20)
+
+      
+          print("Saved ICASSP figures to:", os.path.join(RESULTS_DIRECTORY, "bayesian_model", EXPERIMENT_NAME))
+      except Exception as e:
+          print("[WARN] Failed to generate ICASSP figures:", e)
+
+    # STEP 8: Create detailed visualizations for the best model
+    '''
     print("\nGenerating detailed visualizations for best model...")
     # Find the best model (lowest MAE)
     best_model_name = None
@@ -590,10 +710,11 @@ def main():
         best_model.visualize_weight_distributions(detailed_dir, "best_model")
         print(f"Best model: {best_model_name} (MAE: {best_mae:.4f}°)")
         print(f"Detailed visualizations saved to: {detailed_dir}")
+    '''
     print("AoA analysis completed successfully!")
     return RFID_data_manager, bayesian_results
 
 if __name__ == "__main__":
-    data_manager, bayesian_results = main()
+    data_manager, bayesian_results = main(run_import=False, run_classical=False, run_bayesian=False)
     print("\nAnalysis complete!")
 # =================================================================================================================================== #
