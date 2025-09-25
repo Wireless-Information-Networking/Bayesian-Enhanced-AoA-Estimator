@@ -20,28 +20,11 @@ import matplotlib.pyplot   as plt                 # Data visualization.         
 import seaborn             as sns                 # Statistical data visualization based on matplotlib.                               #
 import numpy               as np                  # Mathematical functions.                                                           #
 import src.data_management as dm                  # Data management functions.                                                        #
+import style.style         as style               # Custom plotting styles and configurations.                                        #
 from scipy.stats                 import norm      # Statistical functions for normal distribution fitting.                            #
 from scipy.optimize              import curve_fit # Curve fitting functions for Gaussian fitting.                                     #
 from numpy.polynomial.polynomial import polyfit   # Polynomial fitting for trend lines.                                               #
 from scipy                       import stats     # Statistical functions for hypothesis testing and distribution fitting.            #
-# =================================================================================================================================== #
-
-
-# =================================================================================================================================== #
-# ---------------------------------------------------------- PLOTTING SETTINGS ------------------------------------------------------ #
-plt.style.use("seaborn-v0_8-whitegrid")                                                                                               #
-plt.rcParams.update({                                                                                                                 #
-    "font.size"       : 10,        # Base font size for all text in the plot.                                                         #
-    "axes.titlesize"  : 12,        # Title size for axes.                                                                             #
-    "axes.labelsize"  : 12,        # Axis labels size.                                                                                #
-    "xtick.labelsize" : 12,        # X-axis tick labels size.                                                                         #
-    "ytick.labelsize" : 12,        # Y-axis tick labels size.                                                                         #
-    "legend.fontsize" : 14,        # Legend font size for all text in the legend.                                                     #
-    "figure.titlesize": 14,        # Overall figure title size for all text in the figure.                                            #
-})                                                                                                                                    #
-sns.set_theme(style="whitegrid", context="paper") # Set seaborn theme for additional aesthetics and context.                          #
-plt.rcParams["figure.figsize"] = (6, 4)  # Set default figure size for all plots to 6x4.                                              #
-TAG_NAME = "Belt DEE"             # Default tag name for the analysis.                                                                #
 # =================================================================================================================================== #
 
 
@@ -1268,7 +1251,7 @@ def run_aoa_analysis(base_dir, tag_id=None):
             for freq_key, df in frequencies.items():
                 print(f"Processing Distance: {distance_key}, Replica: {replica_key}, Frequency: {freq_key}...")
                 # Run analysis with plot
-                tag_name = f"{TAG_NAME} at {distance_key}, {replica_key}"
+                tag_name = f"{style.TAG_NAME} at {distance_key}, {replica_key}"
                 analysis_results = aoa_analysis_from_df(df, tag_name, tag_id, replica_dir)
                 # Store original phase values for distance-level analysis
                 analysis_results['phase_values'] = df['phase'].values.tolist()

@@ -34,50 +34,7 @@ from   pyro.infer.autoguide    import AutoNormal          # Automatic guide for 
 from   cycler                  import cycler              # For custom matplotlib color cycles.                                       # 
 from   matplotlib              import rcParams            # For setting matplotlib parameters.                                        #   
 mpl.use('Agg')                                            # Use 'Agg' backend for non-interactive plotting (suitable for scripts).    #
-# =================================================================================================================================== #
-
-
-# =================================================================================================================================== #
-# ---------------------------------------------------------- PLOTTING SETTINGS ------------------------------------------------------ #
-COLOR_CYCLE  = ['#1f77b4','#ff7f0e','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf']                  #
-MARKER_CYCLE = ['o','s','D','^','v','<','>','p','P','*']                                                                              #
-custom_cycler = (cycler(color=COLOR_CYCLE) * cycler(marker=MARKER_CYCLE[:len(COLOR_CYCLE)])*cycler(linestyle=['-']*len(COLOR_CYCLE))) #
-TITLE_SIZE, LABEL_SIZE, LEGEND_SIZE, TICK_SIZE, ANNOTATION_SIZE = 24, 20, 20, 18, 12                                                  #
-FIG_WIDTH, FIG_HEIGHT, LINE_WIDTH, MARKER_SIZE = 10, 7, 1.75, 8                                                                       #
-plt.style.use("seaborn-v0_8-whitegrid")                                                                                               #
-mpl.rcParams['axes.prop_cycle'] = custom_cycler                                                                                       #
-plt.rcParams.update({                                                                                                                 #
-    "figure.figsize": (FIG_WIDTH, FIG_HEIGHT),                                                                                        #
-    "figure.dpi": 300,                                                                                                                #
-    "figure.titlesize": TITLE_SIZE,                                                                                                   #
-    "font.family": "serif",                                                                                                           #
-    "font.serif": ["Computer Modern Roman", "Times New Roman"],                                                                       #
-    "font.size": LABEL_SIZE,                                                                                                          #
-    "axes.titlesize": TITLE_SIZE,                                                                                                     #
-    "axes.labelsize": LABEL_SIZE,                                                                                                     #
-    "axes.linewidth": 1.2,                                                                                                            #
-    "axes.grid": True,                                                                                                                #
-    "axes.grid.which": "both",                                                                                                        #
-    "axes.grid.axis": "both",                                                                                                         #
-    "xtick.labelsize": TICK_SIZE,                                                                                                     #
-    "ytick.labelsize": TICK_SIZE,                                                                                                     #
-    "xtick.major.width": 1.0,                                                                                                         #
-    "ytick.major.width": 1.0,                                                                                                         #
-    "legend.fontsize": LEGEND_SIZE,                                                                                                   #
-    "legend.framealpha": 0.8,                                                                                                         #
-    "legend.edgecolor": "0.8",                                                                                                        #
-    "legend.fancybox": True,                                                                                                          #
-    "legend.markerscale": 1.2,                                                                                                        #
-    "lines.linewidth": LINE_WIDTH,                                                                                                    #
-    "lines.markersize": MARKER_SIZE,                                                                                                  #
-    "lines.markeredgewidth": 1.2,                                                                                                     #
-    "text.usetex": True,                                                                                                              #
-    "text.latex.preamble": r"\usepackage{amsmath,amssymb,amsfonts,mathrsfs}",                                                         #
-})                                                                                                                                    #
-sns.set_theme(style="whitegrid", context="paper", font_scale=1.2)                                                                     #
-TAG_NAME = "Belt DEE"                                                                                                                 #
-plt.rc('text', usetex=True)                                                                                                           #
-plt.rc('font', family='serif')                                                                                                        #
+import style.style             as     style               # Import custom plotting styles.                                            #     
 # =================================================================================================================================== #
 
 
@@ -543,7 +500,7 @@ class BayesianAoARegressor:
         mn, mx = min(y_test.min(), y_pred_mean.min()), max(y_test.max(), y_pred_mean.max())
         plt.plot([mn, mx], [mn, mx], 'r--', label='Perfect Prediction')
         plt.errorbar(y_test, y_pred_mean, yerr=2*y_pred_std, fmt='o', alpha=0.8,
-                     label='Bayesian Predictions (2$\\sigma$)', markersize=MARKER_SIZE)
+                     label='Bayesian Predictions (2$\\sigma$)', markersize=style.MARKER_SIZE)
         prior_colors = {'ds': 'g', 'weighted': 'm', 'music': 'c', 'phase': 'y'}
         prior_markers= {'ds': '^', 'weighted': 's', 'music': 'd', 'phase': 'x'}
         prior_labels = {'ds': 'DS', 'weighted': 'WDS', 'music': 'MUSIC', 'phase': 'PD'}
@@ -751,7 +708,7 @@ class BayesianAoARegressor:
         nx.draw_networkx_nodes(G,pos,node_size=3000,node_color='lightblue',alpha=0.8)
         nx.draw_networkx_edges(G,pos,width=2,arrowsize=20)
         nx.draw_networkx_labels(G,{k:(v[0],v[1]-0.02) for k,v in pos.items()},
-                                labels=labels,font_size=ANNOTATION_SIZE,
+                                labels=labels,font_size=style.ANNOTATION_SIZE,
                                 bbox=dict(facecolor='white',alpha=0.7,boxstyle='round,pad=0.5'))
         plt.axis('off'); plt.tight_layout()
         plt.savefig(os.path.join(vis_dir, "graphical_model.png"), dpi=300, bbox_inches='tight')

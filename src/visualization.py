@@ -13,29 +13,12 @@ import numpy as np                        # Mathematical functions.             
 import os                                 # Operating system dependent functionality.                                                 #
 import main                               # Main module containing data manager and analysis functions.                               #
 from matplotlib.gridspec import GridSpec  # Flexible grid layout for subplots.                                                        #
+import style.style as style               # Custom plotting styles and configurations.                                                #
 # =================================================================================================================================== #
 
 
 # =================================================================================================================================== #
-# ---------------------------------------------------------- PLOTTING SETTINGS ------------------------------------------------------ #
-plt.style.use("seaborn-v0_8-whitegrid")                                                                                               #
-plt.rcParams.update({                                                                                                                 #
-    "font.size"       : 10,        # Base font size for all text in the plot.                                                         #
-    "axes.titlesize"  : 12,        # Title size for axes.                                                                             #
-    "axes.labelsize"  : 12,        # Axis labels size.                                                                                #
-    "xtick.labelsize" : 12,        # X-axis tick labels size.                                                                         #
-    "ytick.labelsize" : 12,        # Y-axis tick labels size.                                                                         #
-    "legend.fontsize" : 14,        # Legend font size for all text in the legend.                                                     #
-    "figure.titlesize": 14,        # Overall figure title size for all text in the figure.                                            #
-})                                                                                                                                    #
-sns.set_theme(style="whitegrid", context="paper") # Set seaborn theme for additional aesthetics and context.                          #
-plt.rcParams["figure.figsize"] = (6, 4)  # Set default figure size for all plots to 6x4.                                              #
-TAG_NAME = "Belt DEE"             # Default tag name for the analysis.                                                                #
-# =================================================================================================================================== #
-
-
-# =================================================================================================================================== #
-# ---------------------------------------------------------- PLOTTING SETTINGS ------------------------------------------------------ #
+# ---------------------------------------------------------- PLOTTING FUNCTIONS ----------------------------------------------------- #
 def visualize_aoa_results(results, aoa_scan, title=None):
     """
     Visualize AoA estimation results with multiple subplots.
