@@ -1,6 +1,6 @@
 # =================================================================================================================================== #
 # ----------------------------------------------------------- DESCRIPTION ----------------------------------------------------------- #
-# Contains the necessary functions to train and evaluate a hierarchical Bayesian model for Angle of Arrival (AoA) estimation using    #
+# Contains the necessary functions to train and evaluate a Bayesian model for Angle of Arrival (AoA) estimation using                 #
 # RFID data. The model incorporates encoded physics-informed estimations based on classical antena-array methods and provides         #
 # uncertainty quantification for its predictions.                                                                                     #
 # =================================================================================================================================== #
