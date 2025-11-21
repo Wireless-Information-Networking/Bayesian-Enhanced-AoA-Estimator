@@ -1,6 +1,6 @@
 # =================================================================================================================================== #
 # ----------------------------------------------------------- DESCRIPTION ----------------------------------------------------------- #
-# Contains the necessary functions to train and evaluate a hierarchical Bayesian model for Angle of Arrival (AoA) estimation using    #
+# Contains the necessary functions to train and evaluate a Bayesian model for Angle of Arrival (AoA) estimation using                 #
 # RFID data. The model incorporates encoded physics-informed estimations based on classical antena-array methods and provides         #
 # uncertainty quantification for its predictions.                                                                                     #
 # =================================================================================================================================== #
@@ -9,10 +9,12 @@
 # =================================================================================================================================== #
 # --------------------------------------------------------- EXTERNAL IMPORTS -------------------------------------------------------- #
 import os                                                 # For file and directory operations.                                        #
+import time                                               # To measure training time.                                                 #
 import torch                                              # PyTorch for tensor computations and neural networks.                      #
 import pyro                                               # Probabilistic programming library.                                        #
 import main                    as main                    # Main module for running the analysis and managing experiments.            #
 import numpy                   as np                      # Numerical operations.                                                     #
+import pandas                  as pd                      # Data manipulation and analysis.                                           #  
 import pyro.distributions      as dist                    # Pyro distributions.                                                       #
 import pyro.optim              as pyro_optim              # Pyro optimizers.                                                          #
 import networkx                as nx                      # For graph-based analyses (if needed).                                     #
@@ -31,10 +33,35 @@ from   pyro.infer              import SVI                 # Stochastic Variation
 from   pyro.infer              import Trace_ELBO          # ELBO loss function for SVI.                                               #
 from   pyro.infer              import Predictive          # Posterior predictive sampling.                                            #
 from   pyro.infer.autoguide    import AutoNormal          # Automatic guide for variational inference.                                #
+from   src.hblr_aoa            import HBLR_AoA            # Updated Pyro HBLR back-end for AoA estimation.                            #
+from   src.hblr_aoa            import HBLRConfig          # Configuration class for HBLR_AoA.                                         #
+from   src.hblr_aoa            import constant_sigma_phys_from_rmse                                                                   #
 from   cycler                  import cycler              # For custom matplotlib color cycles.                                       # 
 from   matplotlib              import rcParams            # For setting matplotlib parameters.                                        #   
-mpl.use('Agg')                                            # Use 'Agg' backend for non-interactive plotting (suitable for scripts).    #
 import style.style             as     style               # Import custom plotting styles.                                            #     
+mpl.use('Agg')                                            # Use 'Agg' backend for non-interactive plotting (suitable for scripts).    #
+# =================================================================================================================================== #
+
+
+# =================================================================================================================================== #
+# ----------------------------------------------------- HELPER/UTILITY FUNCTIONS ---------------------------------------------------- #
+def get_feature_mode_display_name(feature_mode):
+    """
+    Convert internal feature mode code to display name for plots.
+
+    Parameters:
+        - feature_mode [str] : Internal feature mode code.
+
+    Returns:
+        - display_name [str] : Human-readable feature mode name.
+    """
+    mode_map = {
+        'full': 'Full Model',
+        'width_only': 'Width Model',
+        'sensor_only': 'Sensor Model', 
+        'no_distance': 'Sensor Model'
+    }
+    return mode_map.get(feature_mode, feature_mode)
 # =================================================================================================================================== #
 
 
@@ -59,7 +86,7 @@ class BayesianAoARegressor:
         AutoNormal guide over GLOBALS ONLY (hide local 'theta').
     """
 
-    def __init__(self, use_gpu=True, prior_type='ds', feature_mode='full', obs_sigma=0.1):
+    def __init__(self, use_gpu=True, prior_type='ds', feature_mode='full', obs_sigma=0.1, inference='svi'):
         """
         Initialize the Bayesian AoA regressor class.
 
@@ -68,15 +95,17 @@ class BayesianAoARegressor:
             - prior_type   [str]   : Type of physics prior to use ('ds', 'weighted', 'music', 'phase', or 'none').
             - feature_mode [str]   : Feature set to use ('full', 'no_distance', 'width_only').
             - obs_sigma    [float] : Observation noise standard deviation (σᵧ).
+            - inference    [str]   : Inference method ('svi' or 'mcmc' currently supported).
 
         Returns:
             - None
         """
-        self.use_gpu = use_gpu and torch.cuda.is_available()
-        self.device  = torch.device("cuda" if self.use_gpu else "cpu")
+        self.use_gpu      = use_gpu and torch.cuda.is_available()
+        self.device       = torch.device("cuda" if self.use_gpu else "cpu")
         self.prior_type   = prior_type
         self.feature_mode = feature_mode
         self.obs_sigma    = float(obs_sigma)
+        self.inference    = str(inference).lower()
         self.model = None
         self.guide = None
         self.scalers = []
@@ -88,7 +117,102 @@ class BayesianAoARegressor:
         if self.use_gpu:
             print(f"GPU: {torch.cuda.get_device_name(0)}")
 
-    # -------------------------------------------------- Feature Extraction -------------------------------------------------- #
+    def _extract_posterior_params_from_guide(self):
+        """
+        Return dicts {name: np.array} for means/scales of weights and bias from the AutoNormal guide.
+        The method works with either old names ('linear.weight') or new variable names ('w','b').
+
+        Returns:
+            - post_means  [dict] : Dictionary of posterior means for weights and bias.
+            - post_scales [dict] : Dictionary of posterior scales (stddevs) for weights and bias.
+        """
+        post_means, post_scales = {}, {}
+        
+        # Verify the use of a HBLR_AoA backend
+        guide = None
+        if hasattr(self.model, '_guide') and self.model._guide is not None:
+            guide = self.model._guide
+        elif hasattr(self, 'guide') and self.guide is not None:
+            guide = self.guide
+        
+        if guide is None:
+            return post_means, post_scales
+        
+        # Verify guide has the needed method 
+        if not (hasattr(guide, 'named_parameters') and callable(guide.named_parameters)):
+            print(f"Warning: guide type {type(guide)} does not have callable 'named_parameters' method")
+            return post_means, post_scales
+        
+        # Extract SVI parameters
+        try:
+            # Loop through guide parameters
+            for name, param in guide.named_parameters():
+                val = param.detach().cpu().numpy()
+                name_lower = name.lower()
+                
+                # Match weight parameters
+                if 'loc' in name_lower and ('w' in name_lower or 'weight' in name_lower):
+                    if not name_lower.endswith('.b') and 'bias' not in name_lower:
+                        post_means['weights'] = val.reshape(1, -1) if val.ndim == 1 else val
+                
+                # Match weight parameters
+                if 'scale' in name_lower and ('w' in name_lower or 'weight' in name_lower):
+                    if not name_lower.endswith('.b') and 'bias' not in name_lower:
+                        post_scales['weights'] = np.abs(val.reshape(1, -1) if val.ndim == 1 else val)
+                
+                # Match bias parameters
+                if 'loc' in name_lower and (name_lower.endswith('.b') or 'bias' in name_lower):
+                    post_means['bias'] = np.atleast_1d(val)
+                
+                # Match bias parameters
+                if 'scale' in name_lower and (name_lower.endswith('.b') or 'bias' in name_lower):
+                    post_scales['bias'] = np.abs(np.atleast_1d(val))
+                
+                # Obtain tau
+                if 'loc' in name_lower and 'tau' in name_lower:
+                    post_means['tau'] = float(val)
+                if 'scale' in name_lower and 'tau' in name_lower:
+                    post_scales['tau'] = float(np.abs(val))
+            
+            # Try alternative patterns (previous names)
+            if 'weights' not in post_means or 'bias' not in post_means:
+                for name, param in guide.named_parameters():
+                    val = param.detach().cpu().numpy()
+                    if 'locs.w' in name:
+                        post_means['weights'] = val.reshape(1, -1) if val.ndim == 1 else val
+                    if 'scales.w' in name:
+                        post_scales['weights'] = np.abs(val.reshape(1, -1) if val.ndim == 1 else val)
+                    if 'locs.b' in name:
+                        post_means['bias'] = np.atleast_1d(val)
+                    if 'scales.b' in name:
+                        post_scales['bias'] = np.abs(np.atleast_1d(val))
+        
+        except Exception as e:
+            print(f"Warning: Could not extract SVI parameters: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        # MCMC option
+        if hasattr(self.model, '_mcmc') and self.model._mcmc is not None:
+            try:
+                samples = self.model._mcmc.get_samples()
+                if 'w' in samples:
+                    w_samples = samples['w'].cpu().numpy()
+                    post_means['weights'] = w_samples.mean(axis=0).reshape(1, -1)
+                    post_scales['weights'] = w_samples.std(axis=0).reshape(1, -1)
+                if 'b' in samples:
+                    b_samples = samples['b'].cpu().numpy()
+                    post_means['bias'] = np.atleast_1d(b_samples.mean())
+                    post_scales['bias'] = np.atleast_1d(b_samples.std())
+                if 'tau' in samples:
+                    tau_samples = samples['tau'].cpu().numpy()
+                    post_means['tau'] = float(tau_samples.mean())
+                    post_scales['tau'] = float(tau_samples.std())
+            except Exception as e:
+                print(f"Warning: Could not extract MCMC samples: {e}")
+
+        return post_means, post_scales
+
     def _extract_features(self, data_manager, include_distance=True, include_width=True):
         """
         Build X, y and physics priors arrays from DataManager. Also returns feature names.
@@ -171,7 +295,6 @@ class BayesianAoARegressor:
         self.feature_names = feature_names
         return X, y, feature_names, prior_estimates
 
-    # ---------------------------------------------- Hierarchical Pyro Model ------------------------------------------------ #
     def _build_model(self, input_dim):
         """
         Build the hierarchical Bayesian model using Pyro. The model includes:
@@ -204,7 +327,7 @@ class BayesianAoARegressor:
             def __init__(self, input_dim):
                 super().__init__()
                 self.device    = device # Ensure model parameters are on the correct device (CPU/GPU)
-                self.obs_sigma = torch.tensor(float(obs_sigma), device=device) # Fixed observation noise stddev
+                self.obs_sigma = torch.tensor(float(obs_sigma), device=device) # Observation noise stddev
 
                 # Linear layer: Linear regression component of the model - Maps input features to mean AoA
                 self.linear = PyroModule[torch.nn.Linear](input_dim, 1).to(device)
@@ -251,7 +374,6 @@ class BayesianAoARegressor:
                         pyro.sample("obs", dist.Normal(theta, self.obs_sigma), obs=y)
                     else:
                         pyro.sample("obs", dist.Normal(theta, self.obs_sigma))
-
                 return mean
         # Instantiate model
         model = HierarchicalAoA(input_dim)
@@ -260,156 +382,114 @@ class BayesianAoARegressor:
         for _, p in model.named_parameters():
             if p.device != device:
                 p.data = p.data.to(device)
-
         return model
-
-    # -------------------------------------------------------- Training ------------------------------------------------------ #
-    def train(self, data_manager, num_epochs=2000, learning_rate=1e-3, batch_size=128, weight_decay=0.0, verbose=True):
+    
+    def train(self, data_manager, num_epochs=14000, learning_rate=1e-3, batch_size=128, weight_decay=0.0, verbose=True):
         """
-        Train the hierarchical Bayesian AoA model.
+        Train the hierarchical Bayesian AoA model using either inference approach (SVI or MCMC).
 
         Parameters:
             - data_manager [DataManager] : Instance of DataManager with loaded/analyzed data.
-            - num_epochs   [int]         : Number of training epochs.
-            - learning_rate[int]         : Learning rate for the optimizer.
-            - batch_size   [int]         : Mini-batch size for training.
-            - weight_decay [float]       : Weight decay (L2 regularization) for the optimizer.
+            - num_epochs   [int]         : Number of training epochs/steps.
+            - learning_rate [float]      : Learning rate for optimizer.
+            - batch_size   [int]         : Batch size for training.
+            - weight_decay [float]       : Weight decay (L2 regularization) for optimizer.
             - verbose      [bool]        : Whether to print training progress.
-        
+
         Returns:
             - train_summary [dict]       : Dictionary containing training results and metrics.
         """
-        # Feature Set Up and Extraction
+        start_time       = time.time()
         include_distance = self.feature_mode == 'full'
         include_width    = self.feature_mode in ['full','width_only']
         X, y, feature_names, prior_estimates = self._extract_features(data_manager, include_distance, include_width)
+        self.feature_names = feature_names
 
-        # Split train/test data
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1, random_state=42)
 
-        # Split priors (for comparison/plots)
-        prior_splits = {k: train_test_split(prior_estimates[k], test_size=0.1, random_state=42)[1]
-                        for k in prior_estimates}
+        mu_phys_all = prior_estimates.get(self.prior_type, prior_estimates.get('weighted', None))
+        if mu_phys_all is None:
+            mu_phys_all = np.zeros_like(y)
+        try:
+            sigma_const = constant_sigma_phys_from_rmse(mu_phys_all, y, floor=1e-3)
+        except Exception:
+            sigma_const = float(np.sqrt(np.mean((mu_phys_all - y)**2)))
+            sigma_const = max(sigma_const, 1e-3)
+        sigma_phys_all = np.full_like(y, sigma_const, dtype=float)
 
-        # Standardize per-feature
-        self.scalers = []
-        X_train_s = np.zeros_like(X_train)
-        X_test_s  = np.zeros_like(X_test)
-        for i in range(X_train.shape[1]):
-            sc = StandardScaler()
-            X_train_s[:, i] = sc.fit_transform(X_train[:, [i]]).ravel()
-            X_test_s[:,  i] = sc.transform(X_test[:,  [i]]).ravel()
-            self.scalers.append(sc)
-
-        # Torch tensors
-        Xtr = torch.tensor(X_train_s, dtype=torch.float32, device=self.device)
-        Xte = torch.tensor(X_test_s,  dtype=torch.float32, device=self.device)
-        ytr = torch.tensor(y_train,   dtype=torch.float32, device=self.device)
-        yte = torch.tensor(y_test,    dtype=torch.float32, device=self.device)
-
-        # Physics side-channel for training/eval (derive from results: use weighted as mu_phys, RMSE as sigma_phys)
-        mu_phys_all   = prior_estimates['weighted']
-        sigma_phys_all= np.abs(prior_estimates['weighted'] - y)  # crude per-sample sigma;
-        # Set sigma_phys to a moderate constant derived from train RMSE of physics:
-        physics_rmse = float(np.sqrt(np.mean((prior_estimates['weighted'] - y)**2)))
-        sigma_phys_all = np.full_like(y, fill_value=max(physics_rmse, 1e-3))
-
-        # Split physics info. into train/test
         mu_phys_tr, mu_phys_te = train_test_split(mu_phys_all,    test_size=0.1, random_state=42)
         sp_tr,     sp_te       = train_test_split(sigma_phys_all, test_size=0.1, random_state=42)
 
-        # Torch tensors for physics side-channel
-        mu_tr = torch.tensor(mu_phys_tr, dtype=torch.float32, device=self.device)
-        mu_te = torch.tensor(mu_phys_te, dtype=torch.float32, device=self.device)
-        sp_tr = torch.tensor(sp_tr,      dtype=torch.float32, device=self.device)
-        sp_te = torch.tensor(sp_te,      dtype=torch.float32, device=self.device)
+        # Store validation data for closed-form validation
+        self.X_val = X_test
+        self.y_val = y_test
+        self.y_phys_val = mu_phys_te
+        self.sigma_phys_val = sp_te
 
-        # Determine weight prior (mean/std) from chosen physics prior
-        if self.prior_type in prior_estimates:
-            prior_err = prior_estimates[self.prior_type] - y
-            prior_mean = float(np.mean(prior_estimates[self.prior_type]))
-            prior_std  = float(max(0.1, np.sqrt(np.mean(prior_err**2))))
-            print(f"Using {self.prior_type} prior with weight prior std={prior_std:.4f}")
-            self.weight_prior_std = prior_std
+        cfg = HBLRConfig(obs_sigma=self.obs_sigma, lr=learning_rate, num_steps=num_epochs, batch_size=batch_size, verbose=verbose)
+        self.model = HBLR_AoA(input_dim=X_train.shape[1], config=cfg)
+
+        if getattr(self, 'inference', 'svi') == 'mcmc':
+            self.model.fit_mcmc(X_train, y_train, mu_phys_tr, sp_tr, num_warmup=max(200, num_epochs//4), num_samples=max(600, num_epochs//2))
+            y_pred_mean_t, y_pred_std_t = self.model.predict_mcmc(X_test, mu_phys_te, sp_te)
+
+            mcmc_samples   = self.model._mcmc.get_samples()
+            global_samples = {k: v for k, v in mcmc_samples.items() if k in ["w", "b", "tau"]}
+
+            post = Predictive(self.model._model,
+                            posterior_samples=global_samples,
+                            return_sites=["theta"])
+            ypred = post(self.model._to_tensor(X_test),
+                        self.model._to_tensor(mu_phys_te),
+                        self.model._to_tensor(sp_te),
+                        None)["theta"]
+            y_pred_samples = ypred.detach().cpu().numpy()
+
         else:
-            prior_mean, prior_std = 0.0, 30.0
-            print("Using standard broad weight prior N(0,30)")
+            fit_summary = self.model.fit_svi(X_train, y_train, mu_phys_tr, sp_tr)
+            self.guide  = self.model._guide
+            y_pred_mean_t, y_pred_std_t = self.model.predict(X_test, mu_phys_te, sp_te)
+            pred           = Predictive(self.model._model, guide=self.model._guide, num_samples=1000, return_sites=["theta"])
+            ypred          = pred(self.model._to_tensor(X_test), self.model._to_tensor(mu_phys_te), self.model._to_tensor(sp_te), None)["theta"]
+            y_pred_samples = ypred.detach().cpu().numpy()
 
-        pyro.clear_param_store()
-        input_dim = Xtr.shape[1]
-        self.model = self._build_model(input_dim, prior_mean, prior_std)
+        if isinstance(y_pred_mean_t, torch.Tensor):
+            y_pred_mean = y_pred_mean_t.detach().cpu().numpy()
+            y_pred_std  = y_pred_std_t.detach().cpu().numpy()
+        else:
+            y_pred_mean = np.asarray(y_pred_mean_t)
+            y_pred_std  = np.asarray(y_pred_std_t)
 
-        # Guide over GLOBALS ONLY — hide local 'theta'
-        blocked = pyro.poutine.block(self.model, hide=["theta"])
-        self.guide = AutoNormal(blocked, init_scale=0.1)
-
-        if self.use_gpu:
-            for _, v in self.guide.named_parameters():
-                if v.device != self.device:
-                    v.data = v.data.to(self.device)
-
-        optimizer = pyro_optim.ClippedAdam({"lr": 5e-4, "weight_decay": weight_decay, "clip_norm": 5.0})
-        svi = SVI(self.model, self.guide, optimizer, loss=Trace_ELBO())
-
-        # Training loop with mini-batching 
-        n = Xtr.shape[0]
-        losses = []
-        for epoch in range(num_epochs):
-            perm = torch.randperm(n, device=self.device)
-            batch_losses = []
-            for i in range(0, n, batch_size):
-                idx = perm[i:i+batch_size]
-                loss = svi.step(Xtr[idx], mu_tr[idx], sp_tr[idx], ytr[idx])
-                batch_losses.append(loss / max(1, idx.numel()))
-            epoch_loss = float(np.mean(batch_losses))
-            if not np.isfinite(epoch_loss):
-                print("[train] Detected non-finite loss. Stopping early.")
-                break
-            # Check guide params for NaN
-            bad = False
-            for name, p in self.guide.named_parameters():
-                if torch.isnan(p).any() or torch.isinf(p).any():
-                    print(f"[train] Non-finite in guide param: {name}. Stopping.")
-                    bad = True
-                    break
-            if bad: break
-            losses.append(epoch_loss)
-            if verbose and ((epoch+1) % 100 == 0 or epoch == 0):
-                print(f"[train] Epoch {epoch+1}/{num_epochs} - ELBO Loss: {epoch_loss:.4f}")
-
-        # Posterior predictive over theta on test
-        with torch.no_grad():
-            predictive = Predictive(self.model, guide=self.guide, num_samples=1000, return_sites=["theta"])
-            theta_samples = predictive(Xte, mu_te, sp_te, None)["theta"]   # [S, Nte]
-            y_pred_mean = theta_samples.mean(dim=0).cpu().numpy()
-            y_pred_std  = theta_samples.std(dim=0).cpu().numpy()
-            y_pred_samples = theta_samples.cpu().numpy()                   # [S, Nte]
-
-        # Compute metrics
         mae  = mean_absolute_error(y_test, y_pred_mean)
-        rmse = np.sqrt(mean_squared_error(y_test, y_pred_mean))
+        rmse = float(np.sqrt(mean_squared_error(y_test, y_pred_mean)))
+
+        prior_test = {}
+        for k in ['ds','weighted','music','phase']:
+            if k in prior_estimates:
+                _, te = train_test_split(prior_estimates[k], test_size=0.1, random_state=42)
+                prior_test[k] = te
+
+        elapsed_time = time.time() - start_time
 
         self.train_summary = {
-            'losses': losses,
+            'losses': [] if getattr(self, 'inference', 'svi')=='mcmc' else fit_summary.get('losses', []),
             'X_train': X_train, 'y_train': y_train,
             'X_test': X_test,   'y_test': y_test,
             'y_pred_mean': y_pred_mean,
             'y_pred_std':  y_pred_std,
-            'y_pred_samples': y_pred_samples,   # [S, N_test]
+            'y_pred_samples': y_pred_samples,
             'mae': mae, 'rmse': rmse,
-            'prior_metrics': {k: {'mae': mean_absolute_error(y_test, prior_splits[k]),
-                                  'rmse': np.sqrt(mean_squared_error(y_test, prior_splits[k]))}
-                              for k in prior_splits},
-            'prior_test': prior_splits,
-            'feature_names': self.feature_names
+            'prior_metrics': {k: {'mae': mean_absolute_error(y_test, prior_test[k]),
+                                  'rmse': float(np.sqrt(mean_squared_error(y_test, prior_test[k])))}
+                              for k in prior_test},
+            'prior_test': prior_test,
+            'feature_names': self.feature_names,
+            'inference': getattr(self, 'inference', 'svi'),
+            'sigma_phys_const': sigma_const,
+            'elapsed_time' : elapsed_time
         }
-
         print("\nTraining complete!")
-        print(f"Test MAE: {mae:.4f}°, RMSE: {rmse:.4f}°")
-        print("\nComparison with physics-based methods:")
-        for k, m in self.train_summary['prior_metrics'].items():
-            print(f"  {k.upper()}: MAE={m['mae']:.4f}°, RMSE={m['rmse']:.4f}°")
-
+        print(f"Inference: {getattr(self, 'inference', 'svi').upper()} | Test MAE: {mae:.4f}°, RMSE: {rmse:.4f}°")
         return self.train_summary
 
     # -------------------------------------------------------- Inference ----------------------------------------------------- #
@@ -450,8 +530,8 @@ class BayesianAoARegressor:
         sp_t = torch.tensor(sigma_phys,dtype=torch.float32, device=self.device)
 
         # Posterior predictive sampling in batches
-        predictive = Predictive(self.model, guide=self.guide, num_samples=num_samples, return_sites=["theta"])
-        all_theta = []
+        predictive = Predictive(self.model._model, guide=self.model._guide, num_samples=num_samples, return_sites=["theta"])
+        all_theta  = []
         with torch.no_grad():
             for i in range(0, Xt.shape[0], batch_size):
                 out = predictive(Xt[i:i+batch_size], mu_t[i:i+batch_size], sp_t[i:i+batch_size], None)
@@ -464,6 +544,137 @@ class BayesianAoARegressor:
             std  = theta.std(axis=0)
             return mean, std
         return mean
+    
+    def sweep_small_sample(self, data_manager, fractions=(0.05,0.1,0.2,0.4,0.6,0.8), repeats=3, results_dir=None, seed=1234):
+        """
+        Sweep training-set size and evaluate test performance. Saves per-run visualizations under:
+            {results_dir}/bayesian_model/{prior}_{features}_{inference}_p{XX}_r{R}/...
+        Also saves an aggregate CSV and curve plot under:
+            {results_dir}/sweep/sweep_{prior}_{features}_{inference}.csv/.png
+
+        Parameters:
+            - data_manager [DataManager] : Instance of DataManager with loaded/analyzed data.
+            - fractions    [tuple]       : Fractions of training data to use.
+            - repeats      [int]         : Number of repeats per fraction.
+            - results_dir  [str]         : Directory to save results. Defaults to main.RESULTS_DIRECTORY or 'results'.
+            - seed         [int]         : Random seed for reproducibility.
+
+        Returns:
+            - summary      [dict]        : Dictionary containing fractions, errors, and paths.
+        """
+        if results_dir is None:
+            try:
+                results_dir = main.RESULTS_DIRECTORY
+            except Exception:
+                results_dir = "results"
+
+        # 1) Build features once and fix a common test set (10%)
+        include_distance = self.feature_mode == 'full'
+        include_width    = self.feature_mode in ['full','width_only']
+        X, y, feature_names, prior_estimates = self._extract_features(data_manager, include_distance, include_width)
+        self.feature_names = feature_names
+
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1, random_state=42)
+
+        mu_phys_all = prior_estimates.get(self.prior_type, prior_estimates.get('weighted', None))
+        if mu_phys_all is None:
+            mu_phys_all = np.zeros_like(y)
+        # Constant sigma_phys from RMSE
+        try:
+            sigma_const = constant_sigma_phys_from_rmse(mu_phys_all, y, floor=1e-3)
+        except Exception:
+            sigma_const = float(np.sqrt(np.mean((mu_phys_all - y)**2)))
+            sigma_const = max(sigma_const, 1e-3)
+        sigma_phys_all  = np.full_like(y, sigma_const, dtype=float)
+
+        mu_phys_tr, mu_phys_te = train_test_split(mu_phys_all,    test_size=0.1, random_state=42)
+        sp_tr,     sp_te       = train_test_split(sigma_phys_all, test_size=0.1, random_state=42)
+
+        # 2) Arrays to collect metrics
+        F = len(fractions)
+        maes  = np.zeros((F, repeats), dtype=float)
+        rmses = np.zeros((F, repeats), dtype=float)
+
+        rng = np.random.RandomState(seed)
+
+        # 3) Loop over fractions and repeats
+        for fi, frac in enumerate(fractions):
+            n_sub = max(2, int(frac * len(X_train)))
+            for r in range(repeats):
+                idx = rng.choice(len(X_train), size=n_sub, replace=False)
+                X_sub, y_sub = X_train[idx], y_train[idx]
+                mu_sub, sp_sub = mu_phys_tr[idx], sp_tr[idx]
+
+                # Build and fit backend
+                cfg = HBLRConfig(obs_sigma=self.obs_sigma, lr=5e-4, num_steps=14000, batch_size=256, verbose=False)
+                mdl = HBLR_AoA(input_dim=X_sub.shape[1], config=cfg)
+
+                if getattr(self, 'inference', 'svi') == 'mcmc':
+                    mdl.fit_mcmc(X_sub, y_sub, mu_sub, sp_sub, num_warmup=300, num_samples=800)
+                    m_t, s_t = mdl.predict_mcmc(X_test, mu_phys_te, sp_te)
+                else:
+                    mdl.fit_svi(X_sub, y_sub, mu_sub, sp_sub)
+                    m_t, s_t = mdl.predict(X_test, mu_phys_te, sp_te)
+
+                # Convert to numpy
+                m = m_t.detach().cpu().numpy() if hasattr(m_t, "detach") else np.asarray(m_t)
+                s = s_t.detach().cpu().numpy() if hasattr(s_t, "detach") else np.asarray(s_t)
+
+                # Metrics
+                maes[fi, r]  = mean_absolute_error(y_test, m)
+                rmses[fi, r] = float(np.sqrt(mean_squared_error(y_test, m)))
+
+                # Build a temporary train_summary
+                prior_test = {}
+                for k in ['ds','weighted','music','phase']:
+                    if k in prior_estimates:
+                        _, te = train_test_split(prior_estimates[k], test_size=0.1, random_state=42)
+                        prior_test[k] = te
+
+                self.model = mdl
+                self.guide = mdl._guide
+                self.train_summary = {
+                    'losses': [],
+                    'X_train': X_sub, 'y_train': y_sub,
+                    'X_test': X_test, 'y_test': y_test,
+                    'y_pred_mean': m, 'y_pred_std': s,
+                    'y_pred_samples': None,
+                    'mae': maes[fi, r], 'rmse': rmses[fi, r],
+                    'prior_metrics': {k: {'mae': mean_absolute_error(y_test, prior_test[k]),
+                                          'rmse': float(np.sqrt(mean_squared_error(y_test, prior_test[k])))}
+                                      for k in prior_test},
+                    'prior_test': prior_test,
+                    'feature_names': self.feature_names,
+                    'inference': getattr(self, 'inference', 'svi'),
+                    'sigma_phys_const': sigma_const
+                }
+
+                # Save per-run figures with distinct experiment name
+                exp_name = f"{self.prior_type}_{self.feature_mode}_{self.inference}_p{int(frac*100)}_r{r+1}"
+                self.visualize_results(results_dir, exp_name)
+
+        # 4) Save aggregate CSV and curves
+        sweep_dir = os.path.join(results_dir, "sweep")
+        os.makedirs(sweep_dir, exist_ok=True)
+        recs = []
+        for fi, frac in enumerate(fractions):
+            for r in range(repeats):
+                recs.append({'fraction': float(frac), 'repeat': int(r+1), 'mae': float(maes[fi, r]), 'rmse': float(rmses[fi, r])})
+        df = pd.DataFrame(recs)
+        csv_path = os.path.join(sweep_dir, f"sweep_{self.prior_type}_{self.feature_mode}_{self.inference}.csv")
+        df.to_csv(csv_path, index=False)
+
+        plt.figure(figsize=(8,6))
+        x = np.array(fractions)*100.0
+        plt.errorbar(x, maes.mean(1),  yerr=maes.std(1),  fmt='o-', label='MAE')
+        plt.errorbar(x, rmses.mean(1), yerr=rmses.std(1), fmt='s--', label='RMSE')
+        plt.xlabel('Training set size (%)'); plt.ylabel('Error (degrees)')
+        plt.title(f'Small-sample performance ({self.inference.upper()} | prior={self.prior_type} | feats={self.feature_mode})')
+        plt.grid(True, alpha=0.3); plt.legend(); plt.tight_layout()
+        fig_path = os.path.join(sweep_dir, f"sweep_{self.prior_type}_{self.feature_mode}_{self.inference}.png")
+        plt.savefig(fig_path, dpi=300, bbox_inches='tight'); plt.close()
+
+        return {'fractions': fractions, 'mae': maes, 'rmse': rmses, 'csv': csv_path, 'fig': fig_path}
 
     # -------------------------------------------------------- Visualization ------------------------------------------------- #
     def visualize_results(self, output_dir, experiment_name):
@@ -554,36 +765,37 @@ class BayesianAoARegressor:
         plt.close()
 
         # 4) Posterior weight summaries from guide
-        post_means, post_scales = {}, {}
-        for name, param in self.guide.named_parameters():
-            if 'AutoNormal.loc' in name and 'linear.weight' in name:
-                post_means['weights'] = param.detach().cpu().numpy()
-            elif 'AutoNormal.scale' in name and 'linear.weight' in name:
-                post_scales['weights'] = np.abs(param.detach().cpu().numpy())
-            elif 'AutoNormal.loc' in name and 'linear.bias' in name:
-                post_means['bias'] = param.detach().cpu().numpy()
-            elif 'AutoNormal.scale' in name and 'linear.bias' in name:
-                post_scales['bias'] = np.abs(param.detach().cpu().numpy())
-        if 'weights' in post_means:
-            importance = np.abs(post_means['weights'][0])
-            top_idx = np.argsort(importance)[-8:]
-            plt.figure(figsize=(12, 10))
-            for i, idx in enumerate(top_idx):
-                feat = self.feature_names[idx] if idx < len(self.feature_names) else f'Feature {idx}'
-                mu  = post_means['weights'][0, idx]
-                sd  = post_scales['weights'][0, idx]
-                x = np.linspace(mu - 3*sd, mu + 3*sd, 400)
-                plt.subplot(4, 2, i+1)
-                if sd > 0:
-                    plt.plot(x, norm.pdf(x, mu, sd))
-                    plt.fill_between(x, 0, norm.pdf(x, mu, sd), alpha=0.3)
-                plt.axvline(0, color='r', linestyle='--', alpha=0.5)
-                plt.axvline(mu, color='g', linestyle='-')
-                plt.title(f'{feat} (\mu={mu:.3f}, \sigma={sd:.3f})')
-                plt.grid(True, alpha=0.3)
-            plt.tight_layout()
-            plt.savefig(os.path.join(vis_dir, "weight_posteriors.png"), dpi=300, bbox_inches='tight')
-            plt.close()
+        post_means, post_scales = self._extract_posterior_params_from_guide()
+        if self.guide is not None:
+            for name, param in self.guide.named_parameters():
+                if 'AutoNormal.loc' in name and 'linear.weight' in name:
+                    post_means['weights'] = param.detach().cpu().numpy()
+                elif 'AutoNormal.scale' in name and 'linear.weight' in name:
+                    post_scales['weights'] = np.abs(param.detach().cpu().numpy())
+                elif 'AutoNormal.loc' in name and 'linear.bias' in name:
+                    post_means['bias'] = param.detach().cpu().numpy()
+                elif 'AutoNormal.scale' in name and 'linear.bias' in name:
+                    post_scales['bias'] = np.abs(param.detach().cpu().numpy())
+            if 'weights' in post_means:
+                importance = np.abs(post_means['weights'][0])
+                top_idx = np.argsort(importance)[-8:]
+                plt.figure(figsize=(12, 10))
+                for i, idx in enumerate(top_idx):
+                    feat = self.feature_names[idx] if idx < len(self.feature_names) else f'Feature {idx}'
+                    mu  = post_means['weights'][0, idx]
+                    sd  = post_scales['weights'][0, idx]
+                    x = np.linspace(mu - 3*sd, mu + 3*sd, 400)
+                    plt.subplot(4, 2, i+1)
+                    if sd > 0:
+                        plt.plot(x, norm.pdf(x, mu, sd))
+                        plt.fill_between(x, 0, norm.pdf(x, mu, sd), alpha=0.3)
+                    plt.axvline(0, color='r', linestyle='--', alpha=0.5)
+                    plt.axvline(mu, color='g', linestyle='-')
+                    plt.title(f'{feat} ($\\mu$={mu:.3f}, $\\sigma$={sd:.3f})')
+                    plt.grid(True, alpha=0.3)
+                plt.tight_layout()
+                plt.savefig(os.path.join(vis_dir, "weight_posteriors.png"), dpi=300, bbox_inches='tight')
+                plt.close()
 
         # 5) Feature importance
         if 'weights' in post_means:
@@ -594,11 +806,11 @@ class BayesianAoARegressor:
             plt.figure(figsize=(12, 8))
             plt.barh(range(len(names)), imp[idx], align='center')
             plt.yticks(range(len(names)), names)
-            plt.xlabel('Relative Importance (%)')
+            plt.xlabel('Relative Importance (\%)')
             plt.title('Feature Importance (|w| normalized)')
             plt.grid(True, alpha=0.3)
             for i, v in enumerate(imp[idx]):
-                plt.text(v + 0.5, i, f'{v:.1f}%', va='center')
+                plt.text(v + 0.5, i, f'{v:.1f}\%', va='center')
             plt.tight_layout()
             plt.savefig(os.path.join(vis_dir, "feature_importance.png"), dpi=300, bbox_inches='tight')
             plt.close()
@@ -642,9 +854,141 @@ class BayesianAoARegressor:
                 sd = post_scales['bias'][0]
                 f.write(f"\nBias: {mu:.4f} ± {2*sd:.4f}\n")
 
+    def visualize_weight_distributions(self, output_dir, experiment_name):
+        """
+        Create detailed visualizations of prior vs posterior weight distributions
+        and feature importance analysis.
+        
+        Parameters:
+            - output_dir      [str] : Directory to save visualizations
+            - experiment_name [str] : Name for output files
+            
+        Returns:
+            - None (saves plots to disk)
+        """
+        # Extract posterior parameters
+        post_means, post_scales = self._extract_posterior_params_from_guide()
+        if not post_means or 'weights' not in post_means or 'weights' not in post_scales:
+            print("No posterior parameters available. Train model first.")
+            return
+
+        vis_dir = os.path.join(output_dir, "weight_analysis", experiment_name)
+        os.makedirs(vis_dir, exist_ok=True)
+
+        # Feature names
+        if self.feature_mode == 'full':
+            feature_names = ['sin(dphi)', 'cos(dphi)', 'RSSI1', 'RSSI2', 'W', 'D']
+        elif self.feature_mode == 'sensor_only':
+            feature_names = ['sin(dphi)', 'cos(dphi)', 'RSSI1', 'RSSI2']
+        elif self.feature_mode == 'width_only':
+            feature_names = ['sin(dphi)', 'cos(dphi)', 'RSSI1', 'RSSI2', 'W']
+        else:
+            feature_names = [f'Feature {i+1}' for i in range(post_means['weights'].shape[1])]
+
+        # Use the correct arrays
+        w_mean = post_means['weights'][0]
+        w_std  = post_scales['weights'][0]
+        
+        # 1. Prior vs Posterior for weights
+        fig, ax = plt.subplots(figsize=(12, 8))
+        
+        # Prior ranges (based on your config)
+        prior_std = 1.0
+        x = np.linspace(-3*prior_std, 3*prior_std, 1000)
+        prior_pdf = norm.pdf(x, 0, prior_std)
+        
+        # Plot weights with error bars and priors
+        for i in range(len(w_mean)):
+            posterior_x      = np.linspace(w_mean[i] - 3*w_std[i], w_mean[i] + 3*w_std[i], 1000)
+            posterior_pdf    = norm.pdf(posterior_x, w_mean[i], w_std[i])
+            scaled_posterior = posterior_pdf / np.max(posterior_pdf) * 0.8  # Scale for visibility
+            
+            plt.plot(posterior_x, scaled_posterior + i, color=plt.cm.tab10(i % 10), 
+                    label=f"{feature_names[i]}: {w_mean[i]:.3f} ± {w_std[i]:.3f}")
+            
+            # Show prior
+            scaled_prior = prior_pdf / np.max(prior_pdf) * 0.4  # Scale for visibility
+            plt.plot(x, scaled_prior + i, 'k--', alpha=0.3)
+        
+        plt.yticks(range(len(w_mean)), feature_names)
+        plt.xlabel('Weight Value')
+        plt.title('Prior vs Posterior Weight Distributions')
+        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        plt.tight_layout()
+        plt.savefig(os.path.join(vis_dir, "prior_vs_posterior_weights.png"), dpi=300, bbox_inches='tight')
+        plt.close(fig)
+        
+        # 2. Feature importance plot
+        fig, ax = plt.subplots(figsize=(10, 6))
+        
+        # Sort by absolute importance
+        importance_idx = np.argsort(np.abs(w_mean))[::-1]
+        sorted_means   = w_mean[importance_idx]
+        sorted_stds    = w_std[importance_idx]
+        sorted_names   = [feature_names[i] for i in importance_idx]
+        
+        # Plot feature importance with error bars
+        bars = ax.bar(range(len(sorted_means)), np.abs(sorted_means), 
+                yerr=sorted_stds, capsize=5, 
+                color=[plt.cm.tab10(i % 10) for i in range(len(sorted_means))])
+        
+        # Add directional indicators for sign
+        for i, val in enumerate(sorted_means):
+            sign = '+' if val >= 0 else '−'
+            ax.text(i, 0.02, sign, ha='center', fontweight='bold', fontsize=14)
+        
+        ax.set_xticks(range(len(sorted_means)))
+        ax.set_xticklabels(sorted_names, rotation=45, ha='right')
+        ax.set_ylabel('|Weight|')
+        ax.set_title('Feature Importance (Absolute Weight Values)')
+        plt.tight_layout()
+        plt.savefig(os.path.join(vis_dir, "feature_importance.png"), dpi=300, bbox_inches='tight')
+        plt.close(fig)
+        
+        # 3. Correlation matrix between weights (if using MCMC)
+        if self.inference == 'mcmc' and hasattr(self, '_model') and self._model._mcmc is not None:
+            try:
+                samples   = self._model._mcmc.get_samples()
+                w_samples = samples['w']  # Should be shape [num_samples, num_features]
+                
+                # Calculate correlation matrix
+                corr_matrix = np.corrcoef(w_samples.T)
+                
+                # Plot correlation matrix
+                fig, ax = plt.subplots(figsize=(10, 8))
+                cmap    = plt.cm.RdBu_r
+                im      = ax.imshow(corr_matrix, cmap=cmap, vmin=-1, vmax=1)
+                
+                # Add colorbar
+                cbar = fig.colorbar(im, ax=ax, shrink=0.8)
+                cbar.set_label('Correlation')
+                
+                # Add ticks and labels
+                ax.set_xticks(range(len(feature_names)))
+                ax.set_yticks(range(len(feature_names)))
+                ax.set_xticklabels(feature_names, rotation=45, ha='right')
+                ax.set_yticklabels(feature_names)
+                
+                # Add correlation values in cells
+                for i in range(len(feature_names)):
+                    for j in range(len(feature_names)):
+                        text = ax.text(j, i, f"{corr_matrix[i, j]:.2f}", 
+                                    ha="center", va="center", 
+                                    color="white" if abs(corr_matrix[i, j]) > 0.5 else "black")
+                
+                plt.title('Weight Correlation Matrix (from MCMC samples)')
+                plt.tight_layout()
+                plt.savefig(os.path.join(vis_dir, "weight_correlation.png"), dpi=300, bbox_inches='tight')
+                plt.close(fig)
+            except Exception as e:
+                print(f"Could not generate weight correlation plot: {e}")
+        
+        print(f"Weight analysis visualizations saved to {vis_dir}")
+
     def render_model_and_guide(self, output_dir, experiment_name):
         """
         Render and save the model structure, guide distributions, and graphical model.
+        Note: it seems that it tends to cause issues... NOT SOLVED YET.
 
         Parameters:
             - output_dir      [str] : Directory to save visualizations.
@@ -659,15 +1003,28 @@ class BayesianAoARegressor:
         vis_dir = os.path.join(output_dir, "bayesian_model", experiment_name)
         os.makedirs(vis_dir, exist_ok=True)
 
+        # Save model structure - use self.model._model instead of self.model
         with open(os.path.join(vis_dir, "model_structure.txt"), 'w') as f:
-            f.write(f"Model Structure:\n{str(self.model)}\n\n")
-            f.write("Parameter Shapes:\n")
-            for name, param in self.model.named_parameters():
-                f.write(f"  {name}: {tuple(param.shape)}\n")
+            if hasattr(self.model, '_model') and self.model._model is not None:
+                f.write(f"Model Structure:\n{str(self.model._model)}\n\n")
+                f.write("Parameter Shapes:\n")
+                for name, param in self.model._model.named_parameters():
+                    f.write(f"  {name}: {tuple(param.shape)}\n")
+            else:
+                f.write("Model structure not available (HBLR_AoA backend)\n")
 
         # quick guide plots
-        fig, axes = plt.subplots(1, 2, figsize=(12, 6))
+        fig, axes  = plt.subplots(1, 2, figsize=(12, 6))
         weight_loc = weight_scale = bias_loc = bias_scale = None
+        post_means, post_scales = self._extract_posterior_params_from_guide()
+        if 'weights' in post_means:
+            weight_loc = post_means['weights']
+        if 'weights' in post_scales:
+            weight_scale = post_scales['weights']
+        if 'bias' in post_means:
+            bias_loc = post_means['bias']
+        if 'bias' in post_scales:
+            bias_scale = post_scales['bias']
         for name, p in self.guide.named_parameters():
             if 'weight' in name and 'loc' in name:   weight_loc  = p.detach().cpu().numpy()
             if 'weight' in name and 'scale' in name: weight_scale= np.abs(p.detach().cpu().numpy())
@@ -731,7 +1088,7 @@ class BayesianAoARegressor:
         vis_dir = os.path.join(output_dir, "bayesian_model", experiment_name)
         os.makedirs(vis_dir, exist_ok=True)
 
-        y_test = self.train_summary['y_test']
+        y_test      = self.train_summary['y_test']
         y_pred_mean = self.train_summary['y_pred_mean']
         y_pred_std  = self.train_summary['y_pred_std']
         prior_test  = self.train_summary['prior_test']
@@ -744,19 +1101,19 @@ class BayesianAoARegressor:
         if len(y_test) <= num_samples:
             idxs = np.arange(len(y_test))
         else:
-            srt = np.argsort(y_test)
-            step= max(1, len(srt)//num_samples)
+            srt  = np.argsort(y_test)
+            step = max(1, len(srt)//num_samples)
             idxs = srt[::step][:num_samples]
 
         fig, axes = plt.subplots(len(idxs), 1, figsize=(10, 3*len(idxs)))
         if len(idxs) == 1: axes = [axes]
         for i, idx in enumerate(idxs):
-            ax = axes[i]
+            ax         = axes[i]
             true_angle = y_test[idx]
             post_mu, post_sd = y_pred_mean[idx], y_pred_std[idx]
             prior_mu = prior_test[self.prior_type][idx] if self.prior_type in prior_test else 0.0
-            rng = 4*max(prior_std, post_sd)
-            x = np.linspace(min(prior_mu, post_mu)-rng, max(prior_mu, post_mu)+rng, 800)
+            rng      = 4*max(prior_std, post_sd)
+            x        = np.linspace(min(prior_mu, post_mu)-rng, max(prior_mu, post_mu)+rng, 800)
             ax.plot(x, norm.pdf(x, prior_mu, prior_std), 'r--', lw=2, label=f'{self.prior_type.upper()} Prior')
             ax.fill_between(x, 0, norm.pdf(x, prior_mu, prior_std), color='red', alpha=0.2)
             ax.plot(x, norm.pdf(x, post_mu, post_sd), 'b-', lw=2, label='Posterior')
@@ -768,7 +1125,6 @@ class BayesianAoARegressor:
         plt.tight_layout()
         fig.savefig(os.path.join(vis_dir, "prior_vs_posterior.png"), dpi=300, bbox_inches='tight')
         plt.close(fig)
-
 
     def plot_posterior_predictive(self, output_dir, experiment_name):
         """
@@ -786,9 +1142,9 @@ class BayesianAoARegressor:
         vis_dir = os.path.join(output_dir, "bayesian_model", experiment_name)
         os.makedirs(vis_dir, exist_ok=True)
         y_test = self.train_summary['y_test']
-        S, N = self.train_summary['y_pred_samples'].shape
+        S, N   = self.train_summary['y_pred_samples'].shape
         # Convert to a band plot
-        yp = self.train_summary['y_pred_samples']  # [S, N]
+        yp       = self.train_summary['y_pred_samples']  # [S, N]
         sort_idx = np.argsort(y_test)
         y_test_sorted = y_test[sort_idx]
         y5, y25, y50, y75, y95 = np.percentile(yp[:, sort_idx], [5,25,50,75,95], axis=0)
@@ -806,6 +1162,213 @@ class BayesianAoARegressor:
         plt.savefig(os.path.join(vis_dir, "posterior_predictive.png"), dpi=300, bbox_inches='tight')
         plt.close()
 
+    def validate_closed_form_posterior(self, output_dir, exp_name):
+        """
+        Validate model predictions against closed-form posterior fusion.
+        
+        The closed-form posterior for each θ_i is Gaussian with precision-weighted mean:
+        θ_i | rest ~ N((λ_τ μ_lin,i + λ_phys,i μ_phys,i) / (λ_τ + λ_phys,i), 
+                    (λ_τ + λ_phys,i)^(-1))
+        
+        where:
+        - μ_lin,i = E[w^T x_i + b] (regression prediction)
+        - λ_τ = σ_τ^(-2) (regression precision)
+        - λ_phys,i = σ_phys,i^(-2) (physics-based precision)
+        - μ_phys,i is the physics-based estimate
+        
+        Parameters:
+            - output_dir [str] : Directory to save validation plots
+            - exp_name   [str] : Experiment name for file naming
+        """
+    
+        print("\nValidating against closed-form posterior...")
+        
+        # STEP 1: Get validation predictions from the trained model
+        X_val_tensor      = torch.tensor(self.X_val, dtype=torch.float32, device=self.device)
+        mu_phys_tensor    = torch.tensor(self.y_phys_val, dtype=torch.float32, device=self.device)
+        sigma_phys_tensor = torch.tensor(self.sigma_phys_val, dtype=torch.float32, device=self.device)
+        
+        predictive = Predictive(self.model._model, guide=self.model._guide, num_samples=1000, return_sites=["theta"])
+        samples = predictive(X_val_tensor, mu_phys_tensor, sigma_phys_tensor, None)
+        
+        # STEP 2: Extract 'theta' predictions
+        y_pred_samples = samples['theta'].cpu().numpy()
+        y_pred_mean    = y_pred_samples.mean(axis=0)
+        y_pred_std     = y_pred_samples.std(axis=0)
+        
+        # STEP 3: Compute closed-form posterior predictions
+        y_closed_form     = np.zeros(len(self.X_val))
+        y_closed_form_std = np.zeros(len(self.X_val))
+        
+        # Extract learned parameters
+        if self.inference == 'svi':
+            # For SVI, extract from guide
+            post_means, post_scales = self._extract_posterior_params_from_guide()
+            
+            if 'weights' in post_means and 'bias' in post_means:
+                w_loc   = post_means['weights'][0] if post_means['weights'].ndim > 1 else post_means['weights']
+                b_loc   = post_means['bias'][0] if post_means['bias'].ndim > 0 else post_means['bias']
+                tau_loc = float(post_means.get('tau', self.obs_sigma))
+                tau     = abs(tau_loc)
+            else:
+                # Fallback: use zeros
+                print("Warning: Could not extract w, b from guide. Using zeros.")
+                w_loc   = np.zeros(self.X_val.shape[1])
+                b_loc   = 0.0
+                tau_loc = 0.0
+                tau     = 0.0
+            
+            # Get obs_scale (just in case)
+            obs_scale = self.obs_sigma
+            
+        else: # MCMC case
+            if hasattr(self.model, '_mcmc') and self.model._mcmc is not None:
+                try:
+                    samples_dict = self.model._mcmc.get_samples()
+                    w_loc = samples_dict['w'].mean(axis=0).cpu().numpy()
+                    b_loc = samples_dict['b'].mean().cpu().numpy()
+                    
+                    # Try to get tau from samples
+                    if 'tau' in samples_dict:
+                        tau = float(samples_dict['tau'].mean().cpu().numpy())
+                        tau = abs(tau)
+                    else:
+                        tau = float(self.obs_sigma)
+                except Exception as e:
+                    print(f"Warning: Could not extract MCMC parameters: {e}")
+                    w_loc = np.zeros(self.X_val.shape[1])
+                    b_loc = 0.0
+                    tau = float(self.obs_sigma)
+            else:
+                print("Warning: MCMC samples not available")
+                w_loc = np.zeros(self.X_val.shape[1])
+                b_loc = 0.0
+                obs_scale = self.obs_sigma
+
+        # STEP 4: Adjust weights if standardization was used
+        if hasattr(self.model, "_scaler") and self.model._scaler is not None:
+            mu_x, std_x = self.model._scaler
+            mu_x = mu_x.cpu().numpy().reshape(-1)
+            std_x = std_x.cpu().numpy().reshape(-1)
+            # Unstandardized weights (original feature space)
+            w_unstd = w_loc / std_x
+            b_unstd = b_loc - np.dot(w_unstd, mu_x)
+        else:
+            # No standardization used
+            w_unstd = w_loc
+            b_unstd = b_loc
+        
+        # STEP 5: Compute closed-form for each sample
+        for i in range(len(self.X_val)):
+            # Regression prediction
+            mu_lin = np.dot(w_unstd, self.X_val[i]) + b_unstd
+            # Physics-based estimate
+            mu_phys    = self.y_phys_val[i]
+            sigma_phys = self.sigma_phys_val[i]
+            # Precisions
+            lambda_tau  = 1.0 / (tau ** 2)
+            lambda_phys = 1.0 / (sigma_phys ** 2)
+            
+            # Closed-form posterior mean (precision-weighted fusion)
+            y_closed_form[i] = (lambda_tau * mu_lin + lambda_phys * mu_phys) / (lambda_tau + lambda_phys)
+            
+            # Closed-form posterior variance
+            y_closed_form_std[i] = 1.0 / (lambda_tau + lambda_phys)
+        
+        # STEP 6: Create validation plots
+        val_dir = os.path.join(output_dir, "closed_form_validation")
+        os.makedirs(val_dir, exist_ok=True)
+        
+        fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+        
+        # Plot 1: Predictive vs Closed-Form
+        ax = axes[0, 0]
+        ax.scatter(y_closed_form, y_pred_mean, alpha=0.6)
+        lims = [min(y_closed_form.min(), y_pred_mean.min()), 
+                max(y_closed_form.max(), y_pred_mean.max())]
+        ax.plot(lims, lims, 'r--', label='Perfect agreement')
+        ax.set_xlabel(r'Closed-Form Posterior Mean ($^\circ$)')
+        ax.set_ylabel(r'Predictive Mean ($^\circ$)')
+        ax.set_title('Posterior Predictive vs Closed-Form')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        
+        # Plot 2: Residuals
+        ax = axes[0, 1]
+        residuals = y_pred_mean - y_closed_form
+        ax.hist(residuals, bins=30, alpha=0.7, edgecolor='black')
+        ax.axvline(0, color='r', linestyle='--', label='Zero residual')
+        ax.set_xlabel(r'Residual: Predictive - Closed-Form ($^\circ$)')
+        ax.set_ylabel('Frequency')
+        ax.set_title(f'Residuals (Mean: {residuals.mean():.4f}, Std: {residuals.std():.4f})')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        
+        # Plot 3: Uncertainty comparison
+        ax = axes[1, 0]
+        ax.scatter(y_closed_form_std, y_pred_std, alpha=0.6)
+        lims = [min(y_closed_form_std.min(), y_pred_std.min()), 
+                max(y_closed_form_std.max(), y_pred_std.max())]
+        ax.plot(lims, lims, 'r--', label='Perfect agreement')
+        ax.set_xlabel(r'Closed-Form Std ($^\circ$)')
+        ax.set_ylabel(r'Predictive Std ($^\circ$)')
+        ax.set_title('Uncertainty Comparison')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        
+        # Plot 4: Error vs True values
+        ax = axes[1, 1]
+        ax.scatter(self.y_val, y_pred_mean, alpha=0.5, label='Predictive')
+        ax.scatter(self.y_val, y_closed_form, alpha=0.5, label='Closed-Form')
+        lims = [min(self.y_val.min(), y_pred_mean.min(), y_closed_form.min()),
+                max(self.y_val.max(), y_pred_mean.max(), y_closed_form.max())]
+        ax.plot(lims, lims, 'k--', alpha=0.5)
+        ax.set_xlabel(r'True Angle ($^\circ$)')
+        ax.set_ylabel(r'Predicted Angle ($^\circ$)')
+        ax.set_title('Predictions vs Ground Truth')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.savefig(os.path.join(val_dir, f"{exp_name}_closed_form_validation.png"), 
+                    dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        # Compute metrics
+        mae_predictive   = np.mean(np.abs(y_pred_mean - self.y_val))
+        mae_closed_form  = np.mean(np.abs(y_closed_form - self.y_val))
+        rmse_predictive  = np.sqrt(np.mean((y_pred_mean - self.y_val)**2))
+        rmse_closed_form = np.sqrt(np.mean((y_closed_form - self.y_val)**2))
+        
+        # Save validation report
+        report_path = os.path.join(val_dir, f"{exp_name}_validation_report.txt")
+        with open(report_path, 'w') as f:
+            f.write("Closed-Form Posterior Validation Report\n")
+            f.write("=" * 60 + "\n\n")
+            f.write("Predictive Performance:\n")
+            f.write(f"  MAE:  {mae_predictive:.4f}°\n")
+            f.write(f"  RMSE: {rmse_predictive:.4f}°\n\n")
+            f.write("Closed-Form Performance:\n")
+            f.write(f"  MAE:  {mae_closed_form:.4f}°\n")
+            f.write(f"  RMSE: {rmse_closed_form:.4f}°\n\n")
+            f.write("Agreement Metrics:\n")
+            f.write(f"  Mean residual: {residuals.mean():.4f}°\n")
+            f.write(f"  Residual std:  {residuals.std():.4f}°\n")
+            f.write(f"  Max residual:  {np.abs(residuals).max():.4f}°\n")
+        
+        print(f"\nValidation results saved to: {val_dir}")
+        print(f"Predictive MAE: {mae_predictive:.4f}° | Closed-Form MAE: {mae_closed_form:.4f}°")
+        print(f"Mean residual: {residuals.mean():.4f}° (std: {residuals.std():.4f}°)")
+        
+        return {
+            'mae_predictive': mae_predictive,
+            'mae_closed_form': mae_closed_form,
+            'rmse_predictive': rmse_predictive,
+            'rmse_closed_form': rmse_closed_form,
+            'residual_mean': residuals.mean(),
+            'residual_std': residuals.std()
+        }
+
     def plot_uncertainty_calibration(self, output_dir, experiment_name):
         """
         Plot uncertainty calibration using standardized errors and KS test.
@@ -822,8 +1385,8 @@ class BayesianAoARegressor:
         vis_dir = os.path.join(output_dir, "bayesian_model", experiment_name)
         os.makedirs(vis_dir, exist_ok=True)
         y_test = self.train_summary['y_test']
-        mu = self.train_summary['y_pred_mean']
-        sd = self.train_summary['y_pred_std']
+        mu     = self.train_summary['y_pred_mean']
+        sd     = self.train_summary['y_pred_std']
         z = (y_test - mu) / np.maximum(sd, 1e-9)
         plt.figure(figsize=(10, 8))
         plt.hist(z, bins=20, density=True, alpha=0.6, label='Standardized Errors')
@@ -840,7 +1403,6 @@ class BayesianAoARegressor:
         plt.savefig(os.path.join(vis_dir, "uncertainty_calibration.png"), dpi=300, bbox_inches='tight')
         plt.close()
 
-    # ---------------- Optional analysis using posterior weights (kept from baseline) ---------------- #
     def analyze_with_posterior_weights(self, data_manager, output_dir, experiment_name):
         """
         Analyze selected samples using the posterior weight mean to create a weighted spectrum.
@@ -897,7 +1459,7 @@ class BayesianAoARegressor:
             weighted_spectrum = np.exp(-(weighted_spectrum - pred)**2)
             weighted_spectrum /= max(weighted_spectrum.max(), 1e-9)
             weighted_angle = bayesian_aoa[np.argmax(weighted_spectrum)]
-            # plots
+            # Plots
             plt.figure(figsize=(12, 8))
             plt.subplot(2, 1, 1)
             plt.plot(analysis_aoa, original['spectra']['ds'], 'r-', label='Original DS')
@@ -954,14 +1516,14 @@ class BayesianAoARegressor:
         Returns:
             - features   [np.ndarray] : Extracted feature vector.
         """
-        phase1_mean = np.angle(np.mean(phasor1))
-        phase2_mean = np.angle(np.mean(phasor2))
-        phase_diff  = np.angle(np.exp(1j * (phase1_mean - phase2_mean)))
-        mag1_mean   = np.mean(np.abs(phasor1))
-        mag2_mean   = np.mean(np.abs(phasor2))
-        rssi1_mean  = np.mean(rssi1)
-        rssi2_mean  = np.mean(rssi2)
-        rssi_diff   = rssi1_mean - rssi2_mean
+        phase1_mean  = np.angle(np.mean(phasor1))
+        phase2_mean  = np.angle(np.mean(phasor2))
+        phase_diff   = np.angle(np.exp(1j * (phase1_mean - phase2_mean)))
+        mag1_mean    = np.mean(np.abs(phasor1))
+        mag2_mean    = np.mean(np.abs(phasor2))
+        rssi1_mean   = np.mean(rssi1)
+        rssi2_mean   = np.mean(rssi2)
+        rssi_diff    = rssi1_mean - rssi2_mean
         ph1_r, ph1_i = np.mean(phasor1.real), np.mean(phasor1.imag)
         ph2_r, ph2_i = np.mean(phasor2.real), np.mean(phasor2.imag)
         features = np.array([
@@ -1028,7 +1590,7 @@ def figure1_model_comparison(results_dict, output_dir, experiment_name):
     Returns: 
         - Saves a bar chart comparing MAE and RMSE of different models.
     """
-    # Increase default font sizes for paper readability
+    # Font sizes for paper readability
     rcParams['font.size'] = 20
     rcParams['axes.titlesize'] = 22
     rcParams['axes.labelsize'] = 20
@@ -1042,7 +1604,15 @@ def figure1_model_comparison(results_dict, output_dir, experiment_name):
     names, maes, rmses = [], [], []
     for name, s in results_dict.items():
         if isinstance(s, dict) and ('mae' in s and 'rmse' in s):
-            names.append(name); maes.append(float(s['mae'])); rmses.append(float(s['rmse']))
+            # Parse model name
+            if '_' in name:
+                prior, fmode = name.split('_', 1)
+                display_name = f"{prior.upper()} - {get_feature_mode_display_name(fmode)}"
+            else:
+                display_name = name
+            names.append(display_name)
+            maes.append(s['mae'])
+            rmses.append(s['rmse'])
     # Sort by RMSE
     order = np.argsort(rmses)
     names  = [names[i]  for i in order]
@@ -1060,7 +1630,7 @@ def figure1_model_comparison(results_dict, output_dir, experiment_name):
     ax.set_title('Model Comparison — MAE vs RMSE')
     ax.grid(True, axis='y', alpha=0.3)
     ax.legend(loc='upper left')
-    # Helper Function: place 4-decimal point labels vertically inside bars
+    # Helper Function
     def _inside_labels(bars, vals, *, color_mode="auto"):
         for b, v in zip(bars, vals):
             h = b.get_height()
@@ -1069,8 +1639,8 @@ def figure1_model_comparison(results_dict, output_dir, experiment_name):
                     f"{v:.4f}°", ha='center', va='center',
                     rotation=90, fontsize=16, color=txt_color)
 
-    _inside_labels(bars_mae, maes,  color_mode="auto")   # auto white/black
-    _inside_labels(bars_rmse, rmses, color_mode="black") # force black on cyan
+    _inside_labels(bars_mae, maes,  color_mode="auto")
+    _inside_labels(bars_rmse, rmses, color_mode="black")
     fig.tight_layout()
     fig.savefig(os.path.join(vis_dir, "ICASSP_Fig1_model_comparison.png"), dpi=300, bbox_inches='tight')
     plt.close(fig)
@@ -1091,7 +1661,7 @@ def figure2_scatter_and_posterior(best_summary, output_dir, experiment_name, mod
     Returns:
         - Saves a figure with scatter plot and posterior predictive distribution.
     """
-    # Increase default font sizes for paper readability
+    # Font sizes for paper readability
     rcParams['font.size'] = 20
     rcParams['axes.titlesize'] = 22
     rcParams['axes.labelsize'] = 20
@@ -1115,7 +1685,7 @@ def figure2_scatter_and_posterior(best_summary, output_dir, experiment_name, mod
         shape_map = {'ds': '^', 'weighted': 'x', 'music': 's', 'phase': 'd'}
         color_map = {'ds': 'g',  'weighted': 'm', 'music': 'c', 'phase': 'y'}
         for key, vals in priors.items():
-            mk = shape_map.get(key, 'o')
+            mk  = shape_map.get(key, 'o')
             col = color_map.get(key, '#888888')
             if mk == 'x':
                 ax.scatter(y_true, np.asarray(vals), marker=mk, color=col, s=58, alpha=0.7, label=key.upper())
@@ -1131,7 +1701,7 @@ def figure2_scatter_and_posterior(best_summary, output_dir, experiment_name, mod
         ax.legend(loc='best')
         return ax
     def create_posterior_plot(ax):
-        order = np.argsort(y_true)
+        order    = np.argsort(y_true)
         y_sorted = y_true[order]
         q5, q25, q50, q75, q95 = np.percentile(samples[:, order], [5, 25, 50, 75, 95], axis=0)
         q5m  = q50 - (q50 - q5)  * magnify
@@ -1182,7 +1752,8 @@ def figure2_scatter_and_posterior(best_summary, output_dir, experiment_name, mod
 # --------------------------------------------------------- ORCHESTRATION ----------------------------------------------------------- #
 def train_bayesian_models(data_manager, results_dir, num_epochs=2000):
     """
-    Train and evaluate multiple Bayesian AoA regression models with different priors and feature modes.
+    Train and evaluate multiple Bayesian AoA regression models with different priors, 
+    feature modes, AND inference methods (SVI + MCMC).
 
     Parameters:
         - data_manager [DataManager] : Instance of DataManager containing training and test data.
@@ -1197,27 +1768,46 @@ def train_bayesian_models(data_manager, results_dir, num_epochs=2000):
     """
     # Verify results directory exists
     os.makedirs(results_dir, exist_ok=True)
+    
     # Define configurations to try
     configs = []
-    for prior in ['ds','weighted','music','phase']:
-        for fmode in ['full','width_only','sensor_only']:
-            configs.append((prior, fmode))
+    for prior in ['ds', 'weighted', 'music', 'phase']:
+        for fmode in ['full', 'width_only', 'sensor_only']:
+            for inference in ['svi', 'mcmc']:
+                configs.append((prior, fmode, inference))
+    
     # Train and evaluate each configuration
     models = {}
-    for prior, fmode in configs:
-        exp_name = f"{prior}_{fmode}"
+    for prior, fmode, inference in configs:
+        exp_name = f"{prior}_{fmode}_{inference}"
         print(f"\n=== Training {exp_name} ===")
-        model = BayesianAoARegressor(prior_type=prior, feature_mode=fmode, obs_sigma=1e-2)
-        summary = model.train(data_manager, num_epochs=num_epochs, learning_rate=1e-3, batch_size=128, verbose=True)
+        
+        # Create model with specified inference method
+        model = BayesianAoARegressor(
+            prior_type=prior, 
+            feature_mode=fmode, 
+            obs_sigma=1e-2,
+            inference=inference
+        )
+        
+        summary = model.train(
+            data_manager, 
+            num_epochs=num_epochs, 
+            learning_rate=1e-3, 
+            batch_size=128, 
+            verbose=True
+        )
+        
+        # Visualizations
         model.visualize_results(results_dir, exp_name)
-        model.render_model_and_guide(results_dir, exp_name)
-        model.visualize_prior_vs_posterior(results_dir, exp_name, num_samples=5)
-        model.plot_posterior_predictive(results_dir, exp_name)
-        model.plot_uncertainty_calibration(results_dir, exp_name)
+        # model.render_model_and_guide(results_dir, exp_name)
+        
         models[exp_name] = {'model': model, 'summary': summary}
+    
     # Compare models and obtain the best one
     best_name = min(models, key=lambda n: models[n]['summary']['rmse'])
     best_model = models[best_name]
+    
     # Return results
     return {
         "results": models,       # all models with summaries

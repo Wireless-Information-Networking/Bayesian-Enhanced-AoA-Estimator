@@ -1,0 +1,8 @@
+Best configuration: PD-Full Model-MCMC with 40% samples
+MAE: 0.3461 deg, RMSE: 0.4517 deg
+
+Improvement over baselines:
+MUSIC: 20.1334 deg ? 0.3461 deg (98.28% improvement)
+DS: 20.1334 deg ? 0.3461 deg (98.28% improvement)
+Weighted DS: 20.3618 deg ? 0.3461 deg (98.30% improvement)
+Phase: 10.2528 deg ? 0.3461 deg (96.62% improvement)
