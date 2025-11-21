@@ -227,10 +227,10 @@ def aoa_analysis_from_df(df, tag_name, tag_id=None, output_dir=None):
     distance_antennas = df['antenna_spacing'].iloc[0]
     power_tx  = df['power_dbm'].iloc[0] if 'power_dbm' in df.columns else 27.0
     # Calculate wavelength
-    f = dm.MHz_to_Hz(frequency) 
+    f   = dm.MHz_to_Hz(frequency) 
     lam = dm.get_lambda(f)
-    L = distance_antennas
-    D = distance
+    L   = distance_antennas
+    D   = distance
     # Filter by tag ID if provided
     if tag_id:
         if 'EPC' in df.columns:
@@ -252,7 +252,7 @@ def aoa_analysis_from_df(df, tag_name, tag_id=None, output_dir=None):
     mean_pwr_antenna2    = []     # Storage for mean power (from Tx) (Antenna 2)
     std_pwr_antenna2     = []     # Storage for std power (from Tx) (Antenna 2)
     # Initialize phase offsets
-    delta0_tx = 0.0
+    delta0_tx  = 0.0
     delta0_tag = 0.0
     # Try to calculate hardware offset (optional)
     try:
@@ -368,9 +368,9 @@ def aoa_analysis_from_df(df, tag_name, tag_id=None, output_dir=None):
         # Save plot if output directory is provided
         if output_dir:
             # Create a safe filename from the formatted title
-            safe_title = formatted_title.replace(" ", "_").replace("/", "_").replace(":", "")
+            safe_title    = formatted_title.replace(" ", "_").replace("/", "_").replace(":", "")
             plot_filename = f"{safe_title}_{frequency}MHz.png"
-            plot_path = os.path.join(output_dir, plot_filename)
+            plot_path     = os.path.join(output_dir, plot_filename)
             try:
                 plt.savefig(plot_path, dpi=300)
                 print(f"Saved tag plot to: {plot_path}")
@@ -399,9 +399,9 @@ def aoa_analysis_from_df(df, tag_name, tag_id=None, output_dir=None):
         # Save plot if output directory is provided
         if output_dir:
             # Create a safe filename from the formatted title
-            safe_title = formatted_title.replace(" ", "_").replace("/", "_").replace(":", "")
+            safe_title    = formatted_title.replace(" ", "_").replace("/", "_").replace(":", "")
             plot_filename = f"{safe_title}_transceiver_{frequency}MHz.png"
-            plot_path = os.path.join(output_dir, plot_filename)
+            plot_path     = os.path.join(output_dir, plot_filename)
             try:
                 plt.savefig(plot_path, dpi=300)
                 print(f"Saved transceiver plot to: {plot_path}")
@@ -449,7 +449,7 @@ def analyze_phase_density(df, distance_key, replica_key, freq_key, output_dir=No
     # Extract frequency in MHz for the title
     frequency = df['frequencyMHz'].iloc[0] if 'frequencyMHz' in df.columns else float(freq_key)
     # Get actual distance value
-    distance = df['distance'].iloc[0]
+    distance  = df['distance'].iloc[0]
     # Format replica name
     replica_match = re.search(r'replica[-_]?(\d+)', replica_key, re.IGNORECASE)
     if replica_match:
@@ -468,7 +468,6 @@ def analyze_phase_density(df, distance_key, replica_key, freq_key, output_dir=No
     # Create histogram with density curve
     sns.histplot(phase_values, kde=True, bins=300)
     # Fit normal distribution to data
-    from scipy.stats import norm
     mu, sigma = norm.fit(phase_values)
     x = np.linspace(min(phase_values), max(phase_values), 100)
     p = norm.pdf(x, mu, sigma)
@@ -493,7 +492,6 @@ def analyze_phase_density(df, distance_key, replica_key, freq_key, output_dir=No
             print(f"Error saving phase density plot: {e}")
     plt.close()
     # Calculate additional statistics for normality assessment
-    from scipy import stats
     k2, p_value = stats.normaltest(phase_values)
     return {
         'mu': mu,
@@ -676,20 +674,19 @@ def analyze_phase_density_by_replica(freq_dataframes, distance_key, replica_key,
             'sigma': sigma,
             'normality_test_statistic': k2,
             'normality_p_value': p_value,
-            'is_gaussian': p_value > 0.05  # Typically p > 0.05 suggests Gaussian
+            'is_gaussian': p_value > 0.05
         }
     plt.title(formatted_title, fontsize=16)
     plt.xlabel('Phase (radians)', fontsize=14)
     plt.ylabel('Density', fontsize=14)
     plt.grid(True, alpha=0.3)
-    # Improve legend
     plt.legend(loc='upper right', bbox_to_anchor=(1.1, 1), ncol=1)
     # Save plot if output directory is provided
     if output_dir:
         # Create a safe filename from the formatted title
-        safe_title = formatted_title.replace(" ", "_").replace("/", "_").replace(":", "").replace("(", "").replace(")", "")
+        safe_title    = formatted_title.replace(" ", "_").replace("/", "_").replace(":", "").replace("(", "").replace(")", "")
         plot_filename = f"{safe_title}.png"
-        plot_path = os.path.join(output_dir, plot_filename)
+        plot_path     = os.path.join(output_dir, plot_filename)
         try:
             plt.savefig(plot_path, dpi=300, bbox_inches='tight')
             print(f"Saved combined phase density plot to: {plot_path}")
@@ -765,11 +762,13 @@ def analyze_aoa_by_distance(replica_results, distance_key, output_dir=None):
                 'rmse': rmse
             }
     formatted_title = f"Combined AoA Estimation for All Frequencies at {formatted_dist}"
-    plt.title(formatted_title, fontsize=16)
-    plt.xlabel(r"Actual Angle $\theta$ [degrees]", fontsize=14)
-    plt.ylabel(r"Estimated Angle $\theta$ [degrees]", fontsize=14)
+    plt.title(formatted_title, fontsize=20)
+    plt.xlabel(r"Actual Angle $\theta$ [degrees]", fontsize=18, labelpad=20)
+    plt.ylabel(r"Estimated Angle $\theta$ [degrees]", fontsize=18, labelpad=20)
+    plt.xticks(fontsize=16)
+    plt.yticks(fontsize=16)
     plt.grid(True, alpha=0.3)
-    plt.legend(loc='lower right', framealpha=0.9)
+    plt.legend(loc='lower right', framealpha=0.9, fontsize = 16)
     # Set axis limits to focus on the -15 to 15 degree range
     plt.xlim(-10, 10)
     plt.ylim(-10, 20)
@@ -867,7 +866,6 @@ def analyze_phase_density_by_distance(replica_results, distance_key, output_dir=
             plt.plot(x, p, color=colors[i], linestyle='--', 
                      label=f'Gaussian fit {frequency} MHz:\n $\mu$={mu:.2f}, $\sigma$={sigma:.2f}')
             # Calculate normality statistics
-            from scipy import stats
             k2, p_value = stats.normaltest(all_phases)
             # Store results for this frequency
             frequency_results[freq_key] = {
@@ -960,7 +958,6 @@ def analyze_hw_offset_by_distance(replica_results, distance_key, output_dir=None
         x = freq_stats['frequency']
         y = freq_stats['mean_offset']
         # Linear fit
-        from numpy.polynomial.polynomial import polyfit
         b, m = polyfit(x, y, 1)
         plt.plot(x, b + m*x, 'g--', label=f'Linear fit: {m:.4f}x + {b:.2f}')
         # 2nd order polynomial fit if we have enough data
@@ -1098,11 +1095,13 @@ def analyze_hw_offset_system(results, output_dir=None):
             alpha=0.2, color=colors[i]
         )
     
-    plt.title('Hardware Offset vs. Frequency for Different Distances', fontsize=14)
-    plt.xlabel('Frequency (MHz)', fontsize=12)
-    plt.ylabel('Hardware Phase Offset (degrees)', fontsize=12)
+    plt.title('Hardware Offset vs. Frequency for Different Distances', fontsize=20)
+    plt.xlabel('Frequency (MHz)', fontsize=18, labelpad=20)
+    plt.ylabel('Hardware Phase Offset (degrees)', fontsize=18, labelpad=20)
+    plt.xticks(fontsize=16)
+    plt.yticks(fontsize=16)
     plt.grid(True, alpha=0.3)
-    plt.legend(loc='best')
+    plt.legend(loc='best', fontsize = 16)
     
     # Save multi-line plot if output directory is provided
     if output_dir:
@@ -1222,7 +1221,7 @@ def run_aoa_analysis(base_dir, tag_id=None):
     experiment_name   = os.path.basename(base_dir)
     output_dir        = dm.create_output_directory(output_parent_dir, experiment_name)
     # Create subdirectories for plots and summary
-    plots_dir = os.path.join(output_dir, "plots")
+    plots_dir   = os.path.join(output_dir, "plots")
     summary_dir = os.path.join(output_dir, "summary")
     os.makedirs(plots_dir, exist_ok=True)
     os.makedirs(summary_dir, exist_ok=True)
