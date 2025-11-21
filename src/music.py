@@ -60,3 +60,4 @@ def music_algorithm(phasor1, phasor2, L, wavelength, aoa_scan):
     theta_music = aoa_scan[np.argmax(P_music)]
     
     return theta_music, P_music
+# =================================================================================================================================== #
